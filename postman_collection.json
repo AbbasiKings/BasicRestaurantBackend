@@ -1,0 +1,754 @@
+{
+  "info": {
+    "_postman_id": "restaurant-system-api-v6",
+    "name": "Restaurant System Complete API Collection",
+    "description": "Comprehensive Postman API Collection covering all Admin, Customer, POS, Menu, Device Security, and Upload endpoints.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "base_url", "value": "http://192.168.1.8:5000", "type": "string" },
+    { "key": "admin_token", "value": "", "type": "string" },
+    { "key": "customer_token", "value": "", "type": "string" }
+  ],
+  "item": [
+    {
+      "name": "0. Health Check",
+      "item": [
+        {
+          "name": "Health Check",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{base_url}}/health", "host": ["{{base_url}}"], "path": ["health"] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "1. Admin - Auth & Device Security Module",
+      "item": [
+        {
+          "name": "Admin Sign In (admin@gmail.com)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "var jsonData = pm.response.json();",
+                  "if (jsonData.token) {",
+                  "    pm.collectionVariables.set('admin_token', jsonData.token);",
+                  "    console.log('Saved admin_token:', jsonData.token);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"admin@gmail.com\",\n  \"password\": \"admin123\",\n  \"deviceId\": \"dev_postman_001\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/admin/auth/sign-in",
+              "host": ["{{base_url}}"],
+              "path": ["api", "admin", "auth", "sign-in"]
+            }
+          }
+        },
+        {
+          "name": "Admin Sign Out",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Authorization", "value": "Bearer {{admin_token}}" }],
+            "url": {
+              "raw": "{{base_url}}/api/admin/auth/sign-out",
+              "host": ["{{base_url}}"],
+              "path": ["api", "admin", "auth", "sign-out"]
+            }
+          }
+        },
+        {
+          "name": "Get Registered Devices",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{admin_token}}" }],
+            "url": {
+              "raw": "{{base_url}}/api/admin/devices",
+              "host": ["{{base_url}}"],
+              "path": ["api", "admin", "devices"]
+            }
+          }
+        },
+        {
+          "name": "Approve Device",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Authorization", "value": "Bearer {{admin_token}}" }],
+            "url": {
+              "raw": "{{base_url}}/api/admin/devices/dev_postman_001/approve",
+              "host": ["{{base_url}}"],
+              "path": ["api", "admin", "devices", "dev_postman_001", "approve"]
+            }
+          }
+        },
+        {
+          "name": "Block Device",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Authorization", "value": "Bearer {{admin_token}}" }],
+            "url": {
+              "raw": "{{base_url}}/api/admin/devices/dev_postman_001/block",
+              "host": ["{{base_url}}"],
+              "path": ["api", "admin", "devices", "dev_postman_001", "block"]
+            }
+          }
+        },
+        {
+          "name": "Unblock Device",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Authorization", "value": "Bearer {{admin_token}}" }],
+            "url": {
+              "raw": "{{base_url}}/api/admin/devices/dev_postman_001/unblock",
+              "host": ["{{base_url}}"],
+              "path": ["api", "admin", "devices", "dev_postman_001", "unblock"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "2. Admin - Dashboard & Reports Module",
+      "item": [
+        {
+          "name": "Get Sales Digest KPIs",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{admin_token}}" }],
+            "url": {
+              "raw": "{{base_url}}/api/admin/dashboard/sales-digest",
+              "host": ["{{base_url}}"],
+              "path": ["api", "admin", "dashboard", "sales-digest"]
+            }
+          }
+        },
+        {
+          "name": "Get Item & Category Sales",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{admin_token}}" }],
+            "url": {
+              "raw": "{{base_url}}/api/admin/dashboard/item-category-sales",
+              "host": ["{{base_url}}"],
+              "path": ["api", "admin", "dashboard", "item-category-sales"]
+            }
+          }
+        },
+        {
+          "name": "Get System Audit Log",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{admin_token}}" }],
+            "url": {
+              "raw": "{{base_url}}/api/admin/dashboard/audit-log",
+              "host": ["{{base_url}}"],
+              "path": ["api", "admin", "dashboard", "audit-log"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "3. Admin - POS Terminal Module",
+      "item": [
+        {
+          "name": "Get POS Menu Categories & Items",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{admin_token}}" }],
+            "url": {
+              "raw": "{{base_url}}/api/admin/pos/menu",
+              "host": ["{{base_url}}"],
+              "path": ["api", "admin", "pos", "menu"]
+            }
+          }
+        },
+        {
+          "name": "Get POS Combo Deals",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{admin_token}}" }],
+            "url": {
+              "raw": "{{base_url}}/api/admin/pos/deals",
+              "host": ["{{base_url}}"],
+              "path": ["api", "admin", "pos", "deals"]
+            }
+          }
+        },
+        {
+          "name": "Place POS Order (Dine-In / Takeaway / Delivery)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{admin_token}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"orderType\": \"Delivery\",\n  \"customerName\": \"Usman Raza\",\n  \"customerPhone\": \"03219876543\",\n  \"deliveryAddress\": \"House 12, Street 4, Gulberg, Lahore\",\n  \"totalAmount\": 1500,\n  \"items\": [\n    {\n      \"itemName\": \"Chicken Tikka Pizza\",\n      \"sizeName\": \"Medium\",\n      \"quantity\": 1,\n      \"totalPrice\": 1500\n    }\n  ]\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/admin/pos/order",
+              "host": ["{{base_url}}"],
+              "path": ["api", "admin", "pos", "order"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "4. Admin - Orders Management Module",
+      "item": [
+        {
+          "name": "Get All Admin Orders (Filterable)",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{admin_token}}" }],
+            "url": {
+              "raw": "{{base_url}}/api/admin/orders?source=all&type=all",
+              "host": ["{{base_url}}"],
+              "path": ["api", "admin", "orders"],
+              "query": [
+                { "key": "source", "value": "all" },
+                { "key": "type", "value": "all" }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Get Order Details by ID",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{admin_token}}" }],
+            "url": {
+              "raw": "{{base_url}}/api/admin/orders/1",
+              "host": ["{{base_url}}"],
+              "path": ["api", "admin", "orders", "1"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "5. Admin - Categories Management Module",
+      "item": [
+        {
+          "name": "Get Categories with Sizes & Add-ons",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{admin_token}}" }],
+            "url": {
+              "raw": "{{base_url}}/api/admin/categories",
+              "host": ["{{base_url}}"],
+              "path": ["api", "admin", "categories"]
+            }
+          }
+        },
+        {
+          "name": "Create Category with Checkbox Sizes & Add-ons",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{admin_token}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Pizza\",\n  \"sizes\": [\n    { \"enabled\": true, \"size_name\": \"Small\", \"base_price\": 500 },\n    { \"enabled\": true, \"size_name\": \"Medium\", \"base_price\": 800 },\n    { \"enabled\": true, \"size_name\": \"Large\", \"base_price\": 1100 }\n  ],\n  \"addOns\": [\n    {\n      \"enabled\": true,\n      \"add_on_name\": \"Extra Cheese\",\n      \"price\": 50,\n      \"size_prices\": [\n        { \"enabled\": true, \"size_name\": \"Small\", \"price\": 50 },\n        { \"enabled\": true, \"size_name\": \"Medium\", \"price\": 100 },\n        { \"enabled\": true, \"size_name\": \"Large\", \"price\": 150 }\n      ]\n    }\n  ]\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/admin/categories",
+              "host": ["{{base_url}}"],
+              "path": ["api", "admin", "categories"]
+            }
+          }
+        },
+        {
+          "name": "Update Category",
+          "request": {
+            "method": "PUT",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{admin_token}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Regular Pizza\",\n  \"sizes\": [\n    { \"enabled\": true, \"size_name\": \"Small\", \"base_price\": 550 },\n    { \"enabled\": true, \"size_name\": \"Medium\", \"base_price\": 850 }\n  ]\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/admin/categories/1",
+              "host": ["{{base_url}}"],
+              "path": ["api", "admin", "categories", "1"]
+            }
+          }
+        },
+        {
+          "name": "Delete Category",
+          "request": {
+            "method": "DELETE",
+            "header": [{ "key": "Authorization", "value": "Bearer {{admin_token}}" }],
+            "url": {
+              "raw": "{{base_url}}/api/admin/categories/1",
+              "host": ["{{base_url}}"],
+              "path": ["api", "admin", "categories", "1"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "6. Admin - Menu Items Management Module",
+      "item": [
+        {
+          "name": "Get All Menu Items",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{admin_token}}" }],
+            "url": {
+              "raw": "{{base_url}}/api/admin/menu",
+              "host": ["{{base_url}}"],
+              "path": ["api", "admin", "menu"]
+            }
+          }
+        },
+        {
+          "name": "Create Menu Item with Checkbox Sizes & Add-ons",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{admin_token}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"category_id\": 1,\n  \"name\": \"Chicken Tikka Pizza\",\n  \"description\": \"Tender chicken tikka chunks with onions and cheese\",\n  \"image_url\": \"http://192.168.1.8:5000/uploads/tikka.jpg\",\n  \"has_variants\": true,\n  \"single_price\": null,\n  \"sizes\": [\n    { \"size_name\": \"Small\", \"price\": 500 },\n    { \"size_name\": \"Medium\", \"price\": 800 },\n    { \"size_name\": \"Large\", \"price\": 1100 }\n  ],\n  \"addons\": [\n    {\n      \"addon_name\": \"Extra Cheese\",\n      \"price\": 50,\n      \"size_prices\": [\n        { \"enabled\": true, \"size_name\": \"Small\", \"price\": 50 },\n        { \"enabled\": true, \"size_name\": \"Medium\", \"price\": 100 },\n        { \"enabled\": true, \"size_name\": \"Large\", \"price\": 150 }\n      ]\n    }\n  ]\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/admin/menu",
+              "host": ["{{base_url}}"],
+              "path": ["api", "admin", "menu"]
+            }
+          }
+        },
+        {
+          "name": "Update Menu Item",
+          "request": {
+            "method": "PUT",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{admin_token}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Chicken Tikka Supreme\",\n  \"category_id\": 1,\n  \"has_variants\": true,\n  \"sizes\": [\n    { \"size_name\": \"Small\", \"price\": 550 },\n    { \"size_name\": \"Medium\", \"price\": 850 }\n  ]\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/admin/menu/1",
+              "host": ["{{base_url}}"],
+              "path": ["api", "admin", "menu", "1"]
+            }
+          }
+        },
+        {
+          "name": "Toggle Menu Item Active Status",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Authorization", "value": "Bearer {{admin_token}}" }],
+            "url": {
+              "raw": "{{base_url}}/api/admin/menu/1/toggle",
+              "host": ["{{base_url}}"],
+              "path": ["api", "admin", "menu", "1", "toggle"]
+            }
+          }
+        },
+        {
+          "name": "Delete Menu Item",
+          "request": {
+            "method": "DELETE",
+            "header": [{ "key": "Authorization", "value": "Bearer {{admin_token}}" }],
+            "url": {
+              "raw": "{{base_url}}/api/admin/menu/1",
+              "host": ["{{base_url}}"],
+              "path": ["api", "admin", "menu", "1"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "7. Admin - Combo Deals Module",
+      "item": [
+        {
+          "name": "Get Combo Deals",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{admin_token}}" }],
+            "url": {
+              "raw": "{{base_url}}/api/admin/deals",
+              "host": ["{{base_url}}"],
+              "path": ["api", "admin", "deals"]
+            }
+          }
+        },
+        {
+          "name": "Create Combo Deal",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{admin_token}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Solo Feast Combo Deal\",\n  \"description\": \"1 Small Pizza + 1 Soft Drink\",\n  \"package_price\": 650,\n  \"priority_order\": 1,\n  \"included_items_json\": [\n    {\n      \"itemId\": \"1\",\n      \"itemName\": \"Chicken Tikka Pizza\",\n      \"sizeName\": \"Small\",\n      \"quantity\": 1,\n      \"unitPrice\": 500\n    }\n  ],\n  \"image_url\": \"http://192.168.1.8:5000/uploads/deal1.jpg\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/admin/deals",
+              "host": ["{{base_url}}"],
+              "path": ["api", "admin", "deals"]
+            }
+          }
+        },
+        {
+          "name": "Update Combo Deal",
+          "request": {
+            "method": "PUT",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{admin_token}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Mega Solo Feast\",\n  \"package_price\": 700\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/admin/deals/1",
+              "host": ["{{base_url}}"],
+              "path": ["api", "admin", "deals", "1"]
+            }
+          }
+        },
+        {
+          "name": "Toggle Combo Deal Active Status",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Authorization", "value": "Bearer {{admin_token}}" }],
+            "url": {
+              "raw": "{{base_url}}/api/admin/deals/1/toggle",
+              "host": ["{{base_url}}"],
+              "path": ["api", "admin", "deals", "1", "toggle"]
+            }
+          }
+        },
+        {
+          "name": "Delete Combo Deal",
+          "request": {
+            "method": "DELETE",
+            "header": [{ "key": "Authorization", "value": "Bearer {{admin_token}}" }],
+            "url": {
+              "raw": "{{base_url}}/api/admin/deals/1",
+              "host": ["{{base_url}}"],
+              "path": ["api", "admin", "deals", "1"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "8. Admin - Employees Module",
+      "item": [
+        {
+          "name": "Get Employees",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{admin_token}}" }],
+            "url": {
+              "raw": "{{base_url}}/api/admin/employees",
+              "host": ["{{base_url}}"],
+              "path": ["api", "admin", "employees"]
+            }
+          }
+        },
+        {
+          "name": "Create Employee",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{admin_token}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"full_name\": \"Tariq Ahmed\",\n  \"phone_number\": \"03001234567\",\n  \"address\": \"Main Street, Lahore\",\n  \"position\": \"Head Chef\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/admin/employees",
+              "host": ["{{base_url}}"],
+              "path": ["api", "admin", "employees"]
+            }
+          }
+        },
+        {
+          "name": "Update Employee",
+          "request": {
+            "method": "PUT",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{admin_token}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"position\": \"Executive Chef\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/admin/employees/1",
+              "host": ["{{base_url}}"],
+              "path": ["api", "admin", "employees", "1"]
+            }
+          }
+        },
+        {
+          "name": "Delete Employee",
+          "request": {
+            "method": "DELETE",
+            "header": [{ "key": "Authorization", "value": "Bearer {{admin_token}}" }],
+            "url": {
+              "raw": "{{base_url}}/api/admin/employees/1",
+              "host": ["{{base_url}}"],
+              "path": ["api", "admin", "employees", "1"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "9. Admin - Customers Module",
+      "item": [
+        {
+          "name": "Get Customers with Calculated Total Orders",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{admin_token}}" }],
+            "url": {
+              "raw": "{{base_url}}/api/admin/customers",
+              "host": ["{{base_url}}"],
+              "path": ["api", "admin", "customers"]
+            }
+          }
+        },
+        {
+          "name": "Create Customer Record",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{admin_token}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Usman Raza\",\n  \"phone_number\": \"03219876543\",\n  \"detailed_address\": \"House 12, Gulberg, Lahore\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/admin/customers",
+              "host": ["{{base_url}}"],
+              "path": ["api", "admin", "customers"]
+            }
+          }
+        },
+        {
+          "name": "Toggle Customer Account Block Status",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Authorization", "value": "Bearer {{admin_token}}" }],
+            "url": {
+              "raw": "{{base_url}}/api/admin/customers/1/toggle-block",
+              "host": ["{{base_url}}"],
+              "path": ["api", "admin", "customers", "1", "toggle-block"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "10. Admin - App Settings & Media Upload",
+      "item": [
+        {
+          "name": "Get Restaurant App Settings",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{admin_token}}" }],
+            "url": {
+              "raw": "{{base_url}}/api/admin/restaurant/settings",
+              "host": ["{{base_url}}"],
+              "path": ["api", "admin", "restaurant", "settings"]
+            }
+          }
+        },
+        {
+          "name": "Save App Settings (Hours, Fee, Cash Limit)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{admin_token}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"opening_time\": \"11:00 AM\",\n  \"closing_time\": \"02:00 AM\",\n  \"delivery_fee\": \"150\",\n  \"max_cash_limit\": \"5000\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/admin/restaurant/settings",
+              "host": ["{{base_url}}"],
+              "path": ["api", "admin", "restaurant", "settings"]
+            }
+          }
+        },
+        {
+          "name": "Upload Media Image File",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Authorization", "value": "Bearer {{admin_token}}" }],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                { "key": "image", "type": "file", "src": [] }
+              ]
+            },
+            "url": {
+              "raw": "{{base_url}}/api/upload",
+              "host": ["{{base_url}}"],
+              "path": ["api", "upload"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "11. Customer - Auth & Profile Module",
+      "item": [
+        {
+          "name": "Send OTP (Dummy 123456)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"phone\": \"03230381827\"\n}" },
+            "url": { "raw": "{{base_url}}/api/customer/auth/send-otp", "host": ["{{base_url}}"], "path": ["api", "customer", "auth", "send-otp"] }
+          }
+        },
+        {
+          "name": "Verify OTP (Saves customer_token)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "var jsonData = pm.response.json();",
+                  "if (jsonData.token) {",
+                  "    pm.collectionVariables.set('customer_token', jsonData.token);",
+                  "    console.log('Saved customer_token:', jsonData.token);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"phone\": \"03230381827\",\n  \"otp\": \"123456\"\n}" },
+            "url": { "raw": "{{base_url}}/api/customer/auth/verify-otp", "host": ["{{base_url}}"], "path": ["api", "customer", "auth", "verify-otp"] }
+          }
+        },
+        {
+          "name": "Save User Info Profile",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{customer_token}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"phone\": \"03230381827\",\n  \"name\": \"Usman Raza\",\n  \"address\": \"House 12, Street 4, Gulberg, Lahore\",\n  \"profilePicture\": \"http://192.168.1.8:5000/uploads/profile.jpg\"\n}"
+            },
+            "url": { "raw": "{{base_url}}/api/customer/auth/user-info", "host": ["{{base_url}}"], "path": ["api", "customer", "auth", "user-info"] }
+          }
+        },
+        {
+          "name": "Get Customer Profile",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{customer_token}}" }],
+            "url": { "raw": "{{base_url}}/api/customer/profile?phone=03230381827", "host": ["{{base_url}}"], "path": ["api", "customer", "profile"], "query": [{ "key": "phone", "value": "03230381827" }] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "12. Customer - Home, Menu & Orders Module",
+      "item": [
+        {
+          "name": "Get Customer Home Menu & Items",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{base_url}}/api/customer/home/menu", "host": ["{{base_url}}"], "path": ["api", "customer", "home", "menu"] }
+          }
+        },
+        {
+          "name": "Get Customer App Settings & Rules",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{base_url}}/api/customer/app/settings", "host": ["{{base_url}}"], "path": ["api", "customer", "app", "settings"] }
+          }
+        },
+        {
+          "name": "Get Cart Delivery Quote",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"items\": [\n    { \"pricePaisa\": 50000, \"quantity\": 1 }\n  ]\n}"
+            },
+            "url": { "raw": "{{base_url}}/api/customer/cart/quote", "host": ["{{base_url}}"], "path": ["api", "customer", "cart", "quote"] }
+          }
+        },
+        {
+          "name": "Place Customer COD Order",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"customerName\": \"Usman Raza\",\n  \"customerPhone\": \"03230381827\",\n  \"deliveryAddress\": \"House 12, Street 4, Gulberg, Lahore\",\n  \"totalAmount\": 1600,\n  \"items\": [\n    {\n      \"itemName\": \"Chicken Tikka Pizza (Small)\",\n      \"quantity\": 1,\n      \"unit_price\": 500\n    }\n  ]\n}"
+            },
+            "url": { "raw": "{{base_url}}/api/customer/orders", "host": ["{{base_url}}"], "path": ["api", "customer", "orders"] }
+          }
+        },
+        {
+          "name": "Get Customer Order History",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{customer_token}}" }],
+            "url": { "raw": "{{base_url}}/api/customer/orders/history", "host": ["{{base_url}}"], "path": ["api", "customer", "orders", "history"] }
+          }
+        }
+      ]
+    }
+  ]
+}
