@@ -9,9 +9,10 @@ export const pool = new Pool({
   user: env.DB_USER,
   password: env.DB_PASSWORD,
   database: env.DB_NAME,
+  ssl: env.DB_SSL === 'true' ? { rejectUnauthorized: false } : false,
   max: 10,
   idleTimeoutMillis: 30000,
-  connectionTimeoutMillis: 1000,
+  connectionTimeoutMillis: 2000,
 });
 
 let isPgAvailable = false;

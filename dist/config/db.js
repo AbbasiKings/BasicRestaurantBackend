@@ -13,9 +13,10 @@ exports.pool = new Pool({
     user: config_js_1.env.DB_USER,
     password: config_js_1.env.DB_PASSWORD,
     database: config_js_1.env.DB_NAME,
+    ssl: config_js_1.env.DB_SSL === 'true' ? { rejectUnauthorized: false } : false,
     max: 10,
     idleTimeoutMillis: 30000,
-    connectionTimeoutMillis: 1000,
+    connectionTimeoutMillis: 2000,
 });
 let isPgAvailable = false;
 exports.isPgAvailable = isPgAvailable;

@@ -16,6 +16,7 @@ const envSchema = z.object({
   DB_USER: z.string().default('postgres'),
   DB_PASSWORD: z.string().default('postgres'),
   DB_NAME: z.string().default('restaurant_system_db'),
+  DB_SSL: z.string().default('false'),
   ADMIN_JWT_SECRET: z.string().default('super_secret_admin_jwt_key_2026'),
   CUSTOMER_JWT_SECRET: z.string().default('super_secret_customer_jwt_key_2026'),
   JWT_EXPIRES_IN: z.string().default('7d'),
