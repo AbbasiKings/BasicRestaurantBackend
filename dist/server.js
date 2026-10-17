@@ -9,7 +9,9 @@ const helmet_1 = __importDefault(require("helmet"));
 const path_1 = __importDefault(require("path"));
 const http_1 = require("http");
 const config_js_1 = require("./config/config.js");
+const db_js_1 = require("./config/db.js");
 const errorHandler_js_1 = require("./middleware/errorHandler.js");
+const requestLogger_js_1 = require("./middleware/requestLogger.js");
 const uploadService_js_1 = require("./services/uploadService.js");
 const socketService_js_1 = require("./services/socketService.js");
 const adminRoutes_js_1 = __importDefault(require("./modules/admin/adminRoutes.js"));
@@ -23,6 +25,8 @@ app.use((0, helmet_1.default)({ crossOriginResourcePolicy: false }));
 app.use((0, cors_1.default)());
 app.use(express_1.default.json());
 app.use(express_1.default.urlencoded({ extended: true }));
+// API Request/Response Logger Middleware
+app.use(requestLogger_js_1.requestLogger);
 // Serve Static Uploads Directory
 const uploadsDir = path_1.default.resolve(process.cwd(), 'uploads');
 app.use('/uploads', express_1.default.static(uploadsDir));
@@ -65,11 +69,13 @@ app.use('/api/customer', customerRoutes_js_1.default);
 // Global Error Handler
 app.use(errorHandler_js_1.errorHandler);
 const PORT = parseInt(config_js_1.env.PORT, 10) || 5000;
-server.listen(PORT, '0.0.0.0', () => {
-    console.log(`🚀 Restaurant System Backend API running on port ${PORT} (0.0.0.0)`);
+server.listen(PORT, '0.0.0.0', async () => {
+    console.log(`🚀 Backend live: Restaurant System Backend API is active and listening on port ${PORT} (0.0.0.0)`);
     console.log(`🔌 Socket.io server initialized and listening for events`);
     console.log(`📁 Public media uploads route: ${config_js_1.env.BASE_URL}/uploads`);
     console.log(`📷 Standalone upload endpoint: ${config_js_1.env.BASE_URL}/api/upload`);
     console.log(`💻 Admin API base route: ${config_js_1.env.BASE_URL}/api/admin`);
     console.log(`📱 Customer API base route: ${config_js_1.env.BASE_URL}/api/customer`);
+    // Verify Database Connection on startup
+    await (0, db_js_1.checkDatabaseConnection)();
 });

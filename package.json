@@ -6,9 +6,10 @@
   "scripts": {
     "dev": "tsx watch src/server.ts",
     "build": "tsc",
-    "start": "node dist/server.js",
     "db:migrate": "tsx src/database/migrate.ts",
-    "db:seed": "tsx src/database/seed.ts"
+    "db:seed": "tsx src/database/seed.ts",
+    "db:setup": "npm run db:migrate && npm run db:seed",
+    "start": "npm run db:setup && node dist/server.js"
   },
   "dependencies": {
     "@types/bcryptjs": "^2.4.6",

@@ -4,7 +4,9 @@ import helmet from 'helmet';
 import path from 'path';
 import { createServer } from 'http';
 import { env } from './config/config.js';
+import { checkDatabaseConnection } from './config/db.js';
 import { errorHandler } from './middleware/errorHandler.js';
+import { requestLogger } from './middleware/requestLogger.js';
 import { uploadMiddleware, getImageUrl } from './services/uploadService.js';
 import { initSocketServer } from './services/socketService.js';
 import adminRoutes from './modules/admin/adminRoutes.js';
@@ -21,6 +23,9 @@ app.use(helmet({ crossOriginResourcePolicy: false }));
 app.use(cors());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+
+// API Request/Response Logger Middleware
+app.use(requestLogger);
 
 // Serve Static Uploads Directory
 const uploadsDir = path.resolve(process.cwd(), 'uploads');
@@ -73,11 +78,14 @@ app.use(errorHandler);
 
 const PORT = parseInt(env.PORT, 10) || 5000;
 
-server.listen(PORT, '0.0.0.0', () => {
-  console.log(`🚀 Restaurant System Backend API running on port ${PORT} (0.0.0.0)`);
+server.listen(PORT, '0.0.0.0', async () => {
+  console.log(`🚀 Backend live: Restaurant System Backend API is active and listening on port ${PORT} (0.0.0.0)`);
   console.log(`🔌 Socket.io server initialized and listening for events`);
   console.log(`📁 Public media uploads route: ${env.BASE_URL}/uploads`);
   console.log(`📷 Standalone upload endpoint: ${env.BASE_URL}/api/upload`);
   console.log(`💻 Admin API base route: ${env.BASE_URL}/api/admin`);
   console.log(`📱 Customer API base route: ${env.BASE_URL}/api/customer`);
+
+  // Verify Database Connection on startup
+  await checkDatabaseConnection();
 });

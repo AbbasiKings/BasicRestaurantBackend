@@ -6,10 +6,13 @@ export const errorHandler = (
   res: Response,
   next: NextFunction
 ) => {
-  console.error('❌ Server Error:', err);
-
   const statusCode = err.statusCode || 500;
   const message = err.message || 'Internal Server Error';
+
+  console.error(`❌ [API ERROR] ${req.method} ${req.originalUrl || req.url} - Status: ${statusCode} - Error: ${message}`);
+  if (err.stack && process.env.NODE_ENV === 'development') {
+    console.error(err.stack);
+  }
 
   res.status(statusCode).json({
     success: false,

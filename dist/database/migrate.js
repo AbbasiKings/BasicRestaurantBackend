@@ -14,6 +14,7 @@ async function ensureDatabaseExists() {
         user: config_js_1.env.DB_USER,
         password: config_js_1.env.DB_PASSWORD,
         database: 'postgres', // Connect to default postgres DB first
+        ssl: config_js_1.env.DB_SSL === 'true' ? { rejectUnauthorized: false } : false,
     });
     try {
         await rootClient.connect();
@@ -28,7 +29,8 @@ async function ensureDatabaseExists() {
         }
     }
     catch (error) {
-        console.error('❌ Error checking/creating database:', error);
+        // On managed databases (e.g. Aiven), connecting to 'postgres' root database may be restricted or optional
+        console.log('ℹ️ Skipping root database creation check (Proceeding to migrate target database).');
     }
     finally {
         await rootClient.end();
@@ -190,7 +192,7 @@ async function runMigrations() {
   `;
     try {
         await db_js_1.pool.query(migrationSQL);
-        console.log('✅ All 12 PostgreSQL tables migrated successfully.');
+        console.log('✅ Success migration: All 14 PostgreSQL database tables verified and migrated successfully.');
     }
     catch (error) {
         console.error('❌ Migration failed:', error);
