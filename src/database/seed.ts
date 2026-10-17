@@ -21,7 +21,7 @@ async function seedData() {
        ('opening_time', '06:00 AM'),
        ('closing_time', '05:00 AM'),
        ('delivery_charges', '50'),
-       ('max_cash_limit', '5000'),
+       ('max_cash_limit', '5000')
        ON CONFLICT (setting_key) DO UPDATE SET setting_value = EXCLUDED.setting_value;`
     );
 
