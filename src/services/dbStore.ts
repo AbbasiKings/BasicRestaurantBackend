@@ -228,3 +228,37 @@ export async function getSystemSettingsFromDB() {
   });
   return settings;
 }
+
+// ==========================================
+// 6. AUDIT LOGS MANAGEMENT
+// ==========================================
+export async function createAuditLog(log: {
+  actor_name: string;
+  category: string;
+  action_details: string;
+  ip_device?: string;
+}) {
+  try {
+    const res = await query(
+      `INSERT INTO audit_logs (actor_name, category, action_details, ip_device)
+       VALUES ($1, $2, $3, $4)
+       RETURNING *;`,
+      [log.actor_name, log.category, log.action_details, log.ip_device || '127.0.0.1']
+    );
+    return res.rows[0];
+  } catch (error) {
+    console.error('❌ Failed to save audit log to DB:', error);
+  }
+}
+
+export async function getAuditLogsFromDB() {
+  const res = await query(`SELECT * FROM audit_logs ORDER BY id DESC LIMIT 100;`);
+  return res.rows.map((row: any) => ({
+    id: row.id,
+    actor_name: row.actor_name,
+    category: row.category,
+    action_details: row.action_details,
+    ip_device: row.ip_device || 'N/A',
+    timestamp: row.timestamp ? new Date(row.timestamp).toLocaleString() : new Date().toLocaleString(),
+  }));
+}

@@ -16,10 +16,11 @@ import {
   createOrderInDatabase,
   getAllEmployeesFromDB,
   getSystemSettingsFromDB,
+  createAuditLog,
+  getAuditLogsFromDB,
 } from '../../services/dbStore.js';
 import {
   authorizedDevices,
-  auditLogs,
   AdminDevice,
 } from './adminStore.js';
 
@@ -83,6 +84,13 @@ router.post('/auth/sign-in', async (req: Request, res: Response) => {
         last_seen: new Date().toLocaleString(),
       };
       authorizedDevices.push(device);
+
+      await createAuditLog({
+        actor_name: env.ADMIN_NAME,
+        category: 'Device Security',
+        action_details: `New device login request pending authorization: ${realDeviceName}`,
+        ip_device: `${realDeviceName} (${clientIp})`,
+      });
     } else {
       device.last_seen = new Date().toLocaleString();
       device.device_name = realDeviceName;
@@ -114,6 +122,13 @@ router.post('/auth/sign-in', async (req: Request, res: Response) => {
 
     const token = jwt.sign(adminUser, env.ADMIN_JWT_SECRET, { expiresIn: '7d' });
 
+    await createAuditLog({
+      actor_name: env.ADMIN_NAME,
+      category: 'Authentication',
+      action_details: `Admin signed in successfully from ${realDeviceName}`,
+      ip_device: `${realDeviceName} (${clientIp})`,
+    });
+
     return res.json({
       success: true,
       message: 'Signed in successfully',
@@ -125,7 +140,17 @@ router.post('/auth/sign-in', async (req: Request, res: Response) => {
   return res.status(401).json({ success: false, message: 'Invalid admin email or password' });
 });
 
-router.post('/auth/sign-out', (req: Request, res: Response) => {
+router.post('/auth/sign-out', async (req: Request, res: Response) => {
+  const realDeviceName = parseDeviceName(req);
+  const clientIp = (req.headers['x-forwarded-for'] as string) || req.ip || '127.0.0.1';
+
+  await createAuditLog({
+    actor_name: env.ADMIN_NAME,
+    category: 'Authentication',
+    action_details: `Admin signed out from ${realDeviceName}`,
+    ip_device: `${realDeviceName} (${clientIp})`,
+  });
+
   res.json({ success: true, message: 'Signed out successfully' });
 });
 
@@ -133,28 +158,52 @@ router.get('/devices', (req: Request, res: Response) => {
   res.json({ success: true, data: authorizedDevices });
 });
 
-router.post('/devices/:id/approve', (req: Request, res: Response) => {
+router.post('/devices/:id/approve', async (req: Request, res: Response) => {
   const dev = authorizedDevices.find((d) => d.id === req.params.id || d.device_id === req.params.id);
   if (!dev) return res.status(404).json({ success: false, message: 'Device not found' });
 
   dev.status = 'approved';
   dev.approved_at = new Date().toLocaleString();
+
+  await createAuditLog({
+    actor_name: env.ADMIN_NAME,
+    category: 'Device Security',
+    action_details: `Approved device: ${dev.device_name} (${dev.ip_address})`,
+    ip_device: parseDeviceName(req),
+  });
+
   res.json({ success: true, message: 'Device approved successfully', data: dev });
 });
 
-router.post('/devices/:id/block', (req: Request, res: Response) => {
+router.post('/devices/:id/block', async (req: Request, res: Response) => {
   const dev = authorizedDevices.find((d) => d.id === req.params.id || d.device_id === req.params.id);
   if (!dev) return res.status(404).json({ success: false, message: 'Device not found' });
 
   dev.status = 'blocked';
+
+  await createAuditLog({
+    actor_name: env.ADMIN_NAME,
+    category: 'Device Security',
+    action_details: `Blocked device: ${dev.device_name} (${dev.ip_address})`,
+    ip_device: parseDeviceName(req),
+  });
+
   res.json({ success: true, message: 'Device blocked successfully', data: dev });
 });
 
-router.post('/devices/:id/unblock', (req: Request, res: Response) => {
+router.post('/devices/:id/unblock', async (req: Request, res: Response) => {
   const dev = authorizedDevices.find((d) => d.id === req.params.id || d.device_id === req.params.id);
   if (!dev) return res.status(404).json({ success: false, message: 'Device not found' });
 
   dev.status = 'approved';
+
+  await createAuditLog({
+    actor_name: env.ADMIN_NAME,
+    category: 'Device Security',
+    action_details: `Unblocked device: ${dev.device_name} (${dev.ip_address})`,
+    ip_device: parseDeviceName(req),
+  });
+
   res.json({ success: true, message: 'Device unblocked successfully', data: dev });
 });
 
@@ -222,8 +271,13 @@ router.get('/dashboard/item-category-sales', async (req: Request, res: Response,
   }
 });
 
-router.get('/dashboard/audit-log', (req: Request, res: Response) => {
-  res.json({ success: true, data: auditLogs });
+router.get('/dashboard/audit-log', async (req: Request, res: Response, next) => {
+  try {
+    const logs = await getAuditLogsFromDB();
+    res.json({ success: true, data: logs });
+  } catch (error) {
+    next(error);
+  }
 });
 
 // ==========================================
@@ -265,6 +319,13 @@ router.post('/pos/order', async (req: Request, res: Response, next) => {
       delivery_fee: deliveryFee,
       total_amount: (totalAmount || 1000) + deliveryFee,
       items: items || [],
+    });
+
+    await createAuditLog({
+      actor_name: env.ADMIN_NAME,
+      category: 'POS Order',
+      action_details: `Placed POS Order ${newOrder.order_number} (${orderType}) for ${customerName || 'Walk-in Guest'} (Rs. ${totalAmount})`,
+      ip_device: parseDeviceName(req),
     });
 
     res.status(201).json({ success: true, message: 'POS Order placed successfully', order: newOrder });
