@@ -10,31 +10,27 @@ if (!fs.existsSync(uploadDir)) {
 }
 
 const storage = multer.diskStorage({
-  destination: (req, file, cb) => {
+  destination: (req: any, file: any, cb: any) => {
     cb(null, uploadDir);
   },
-  filename: (req, file, cb) => {
-    const ext = path.extname(file.originalname).toLowerCase() || '.jpg';
+  filename: (req: any, file: any, cb: any) => {
+    const ext = path.extname(file.originalname || '').toLowerCase() || '.jpg';
     const uniqueName = `img_${Date.now()}_${Math.floor(Math.random() * 10000)}${ext}`;
     cb(null, uniqueName);
   },
 });
 
-const fileFilter = (
-  req: any,
-  file: Express.Multer.File,
-  cb: multer.FileFilterCallback
-) => {
+const fileFilter = (req: any, file: any, cb: any) => {
   const allowedTypes = [
     'image/jpeg',
     'image/jpg',
     'image/png',
     'image/webp',
     'image/gif',
-    'application/octet-stream', // Allow raw byte streams from mobile HTTP multipart
+    'application/octet-stream',
   ];
 
-  const ext = path.extname(file.originalname).toLowerCase();
+  const ext = path.extname(file.originalname || '').toLowerCase();
   const allowedExts = ['.jpg', '.jpeg', '.png', '.webp', '.gif', ''];
 
   if (allowedTypes.includes(file.mimetype) || allowedExts.includes(ext)) {

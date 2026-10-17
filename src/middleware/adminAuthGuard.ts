@@ -9,6 +9,7 @@ export interface AdminRequest extends Request {
     email: string;
     role: string;
   };
+  [key: string]: any;
 }
 
 export const adminAuthGuard = (

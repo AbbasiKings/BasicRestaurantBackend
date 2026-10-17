@@ -9,6 +9,7 @@ export interface CustomerRequest extends Request {
     name?: string;
     email?: string;
   };
+  [key: string]: any;
 }
 
 export const customerAuthGuard = (

@@ -17,7 +17,7 @@ export const pool = new Pool({
 
 let isPgAvailable = false;
 
-pool.on('error', (err) => {
+pool.on('error', (err: any) => {
   // Silent error handling for idle pool when pg is not active locally
   isPgAvailable = false;
 });

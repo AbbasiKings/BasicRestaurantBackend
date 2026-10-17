@@ -1,4 +1,4 @@
-import express from 'express';
+import express, { Request, Response } from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
 import path from 'path';
@@ -27,7 +27,7 @@ const uploadsDir = path.resolve(process.cwd(), 'uploads');
 app.use('/uploads', express.static(uploadsDir));
 
 // Health Check Endpoint
-app.get('/health', (req, res) => {
+app.get('/health', (req: Request, res: Response) => {
   res.json({
     status: 'ok',
     service: 'Restaurant System Backend API',
@@ -36,7 +36,7 @@ app.get('/health', (req, res) => {
 });
 
 // Standalone Image Upload API Endpoint
-app.post('/api/upload', uploadMiddleware.single('image'), (req, res) => {
+app.post('/api/upload', uploadMiddleware.single('image'), (req: Request, res: Response) => {
   if (!req.file) {
     return res.status(400).json({ success: false, message: 'No image file provided' });
   }
@@ -50,7 +50,7 @@ app.post('/api/upload', uploadMiddleware.single('image'), (req, res) => {
   });
 });
 
-app.post('/upload', uploadMiddleware.single('image'), (req, res) => {
+app.post('/upload', uploadMiddleware.single('image'), (req: Request, res: Response) => {
   if (!req.file) {
     return res.status(400).json({ success: false, message: 'No image file provided' });
   }

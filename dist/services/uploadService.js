@@ -17,7 +17,7 @@ const storage = multer_1.default.diskStorage({
         cb(null, uploadDir);
     },
     filename: (req, file, cb) => {
-        const ext = path_1.default.extname(file.originalname).toLowerCase() || '.jpg';
+        const ext = path_1.default.extname(file.originalname || '').toLowerCase() || '.jpg';
         const uniqueName = `img_${Date.now()}_${Math.floor(Math.random() * 10000)}${ext}`;
         cb(null, uniqueName);
     },
@@ -29,9 +29,9 @@ const fileFilter = (req, file, cb) => {
         'image/png',
         'image/webp',
         'image/gif',
-        'application/octet-stream', // Allow raw byte streams from mobile HTTP multipart
+        'application/octet-stream',
     ];
-    const ext = path_1.default.extname(file.originalname).toLowerCase();
+    const ext = path_1.default.extname(file.originalname || '').toLowerCase();
     const allowedExts = ['.jpg', '.jpeg', '.png', '.webp', '.gif', ''];
     if (allowedTypes.includes(file.mimetype) || allowedExts.includes(ext)) {
         cb(null, true);
