@@ -42,7 +42,7 @@ router.post('/auth/verify-otp', async (req: Request, res: Response, next) => {
     }
 
     const phoneStr = String(phone).trim();
-    const userRes = await query(`SELECT * FROM users WHERE phone_number = $1;`, [phoneStr]);
+    const userRes = await query(`SELECT * FROM customers WHERE phone_number = $1;`, [phoneStr]);
 
     if (userRes.rows.length > 0) {
       const existingUser = userRes.rows[0];
@@ -75,7 +75,7 @@ router.post('/auth/verify-otp', async (req: Request, res: Response, next) => {
     let targetUser = userRes.rows[0];
     if (!targetUser) {
       const newUserRes = await query(
-        `INSERT INTO users (phone_number, name, is_verified, is_blocked)
+        `INSERT INTO customers (phone_number, name, is_verified, is_blocked)
          VALUES ($1, '', true, false)
          RETURNING *;`,
         [phoneStr]
@@ -114,7 +114,7 @@ router.post('/auth/user-info', async (req: Request, res: Response, next) => {
 
     const phoneStr = String(phone).trim();
     const userRes = await query(
-      `INSERT INTO users (phone_number, name, is_verified, is_blocked)
+      `INSERT INTO customers (phone_number, name, is_verified, is_blocked)
        VALUES ($1, $2, true, false)
        ON CONFLICT (phone_number) DO UPDATE SET name = EXCLUDED.name
        RETURNING *;`,
@@ -123,8 +123,8 @@ router.post('/auth/user-info', async (req: Request, res: Response, next) => {
     const user = userRes.rows[0];
 
     await query(
-      `INSERT INTO customer_addresses (user_id, address_title, detailed_address, is_default)
-       VALUES ($1, 'Home', $2, true);`,
+      `INSERT INTO customer_addresses (customer_id, detailed_address, is_default)
+       VALUES ($1, $2, true);`,
       [user.id, String(address).trim()]
     );
 
@@ -171,7 +171,7 @@ router.post('/auth/verify-phone-change-otp', async (req: Request, res: Response,
     const newPhoneStr = String(newPhone).trim();
 
     const userRes = await query(
-      `UPDATE users SET phone_number = $1 WHERE phone_number = $2 RETURNING *;`,
+      `UPDATE customers SET phone_number = $1 WHERE phone_number = $2 RETURNING *;`,
       [newPhoneStr, currPhoneStr]
     );
 
@@ -328,10 +328,10 @@ router.get('/profile', async (req: CustomerRequest, res: Response, next) => {
   try {
     const phone = req.query.phone as string;
     const userRes = await query(
-      `SELECT u.*, ca.detailed_address
-       FROM users u
-       LEFT JOIN customer_addresses ca ON (ca.user_id = u.id AND ca.is_default = true)
-       WHERE u.phone_number = $1;`,
+      `SELECT c.*, ca.detailed_address
+       FROM customers c
+       LEFT JOIN customer_addresses ca ON (ca.customer_id = c.id AND ca.is_default = true)
+       WHERE c.phone_number = $1;`,
       [phone]
     );
 
@@ -358,16 +358,16 @@ router.put('/profile', async (req: CustomerRequest, res: Response, next) => {
 
     if (phone) {
       if (name) {
-        await query(`UPDATE users SET name = $1 WHERE phone_number = $2;`, [name, phone]);
+        await query(`UPDATE customers SET name = $1 WHERE phone_number = $2;`, [name, phone]);
       }
       if (address) {
-        const userRes = await query(`SELECT id FROM users WHERE phone_number = $1;`, [phone]);
+        const userRes = await query(`SELECT id FROM customers WHERE phone_number = $1;`, [phone]);
         if (userRes.rows.length > 0) {
-          const userId = userRes.rows[0].id;
+          const customerId = userRes.rows[0].id;
           await query(
-            `INSERT INTO customer_addresses (user_id, address_title, detailed_address, is_default)
-             VALUES ($1, 'Home', $2, true);`,
-            [userId, address]
+            `INSERT INTO customer_addresses (customer_id, detailed_address, is_default)
+             VALUES ($1, $2, true);`,
+            [customerId, address]
           );
         }
       }

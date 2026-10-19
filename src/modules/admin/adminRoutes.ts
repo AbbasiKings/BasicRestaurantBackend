@@ -18,11 +18,11 @@ import {
   getSystemSettingsFromDB,
   createAuditLog,
   getAuditLogsFromDB,
+  getAuthorizedDevicesFromDB,
+  upsertAuthorizedDeviceInDB,
+  updateDeviceStatusInDB,
+  getSalesDataFromDB,
 } from '../../services/dbStore.js';
-import {
-  authorizedDevices,
-  AdminDevice,
-} from './adminStore.js';
 
 const router = Router();
 
@@ -44,167 +44,180 @@ function deleteOldUploadFile(imageUrl: string | null | undefined) {
 // ==========================================
 // 1. AUTHENTICATION & DEVICE SECURITY MODULE
 // ==========================================
-router.post('/auth/sign-in', async (req: Request, res: Response) => {
-  const { email, password, deviceId } = req.body;
+router.post('/auth/sign-in', async (req: Request, res: Response, next) => {
+  try {
+    const { email, password, deviceId } = req.body;
 
-  if (!email || !password) {
-    return res.status(400).json({ success: false, message: 'Email and password required' });
-  }
+    if (!email || !password) {
+      return res.status(400).json({ success: false, message: 'Email and password required' });
+    }
 
-  if (
-    email.trim().toLowerCase() === env.ADMIN_EMAIL.toLowerCase() &&
-    password === env.ADMIN_PASSWORD
-  ) {
-    const realDeviceName = parseDeviceName(req);
-    const clientIp = (req.headers['x-forwarded-for'] as string) || req.ip || '127.0.0.1';
-    const clientDeviceId = deviceId || 'dev_primary_001';
+    if (
+      email.trim().toLowerCase() === env.ADMIN_EMAIL.toLowerCase() &&
+      password === env.ADMIN_PASSWORD
+    ) {
+      const realDeviceName = parseDeviceName(req);
+      const clientIp = (req.headers['x-forwarded-for'] as string) || req.ip || '127.0.0.1';
+      const clientDeviceId = deviceId || 'dev_primary_001';
 
-    let device = authorizedDevices.find((d) => d.device_id === clientDeviceId);
+      const allDevices = await getAuthorizedDevicesFromDB();
+      let device = allDevices.find((d) => d.device_id === clientDeviceId);
 
-    if (authorizedDevices.length === 0) {
-      device = {
-        id: `dev_${Date.now()}`,
-        device_id: clientDeviceId,
-        device_name: realDeviceName,
-        ip_address: clientIp,
-        status: 'approved',
-        first_seen: new Date().toLocaleString(),
-        last_seen: new Date().toLocaleString(),
-        approved_at: new Date().toLocaleString(),
+      if (allDevices.length === 0) {
+        device = await upsertAuthorizedDeviceInDB({
+          device_id: clientDeviceId,
+          device_name: realDeviceName,
+          ip_address: clientIp,
+          status: 'approved',
+        });
+      } else if (!device) {
+        device = await upsertAuthorizedDeviceInDB({
+          device_id: clientDeviceId,
+          device_name: realDeviceName,
+          ip_address: clientIp,
+          status: 'pending_approval',
+        });
+
+        await createAuditLog({
+          actor_name: env.ADMIN_NAME,
+          category: 'Device Security',
+          action_details: `New device login request pending authorization: ${realDeviceName}`,
+          ip_device: `${realDeviceName} (${clientIp})`,
+        });
+      } else {
+        await upsertAuthorizedDeviceInDB({
+          device_id: clientDeviceId,
+          device_name: realDeviceName,
+          ip_address: clientIp,
+          status: device.status,
+        });
+      }
+
+      if (device && device.status === 'blocked') {
+        return res.status(403).json({
+          success: false,
+          accountStatus: 'Device Blocked',
+          message: 'This device has been blocked from accessing the Admin Portal.',
+        });
+      }
+
+      if (device && device.status === 'pending_approval') {
+        return res.status(403).json({
+          success: false,
+          accountStatus: 'Device Pending Approval',
+          message: 'This device is pending authorization by the primary administrator.',
+        });
+      }
+
+      const adminUser = {
+        id: 1,
+        name: env.ADMIN_NAME,
+        email: env.ADMIN_EMAIL,
+        role: env.ADMIN_ROLE,
       };
-      authorizedDevices.push(device);
-    } else if (!device) {
-      device = {
-        id: `dev_${Date.now()}`,
-        device_id: clientDeviceId,
-        device_name: realDeviceName,
-        ip_address: clientIp,
-        status: 'pending_approval',
-        first_seen: new Date().toLocaleString(),
-        last_seen: new Date().toLocaleString(),
-      };
-      authorizedDevices.push(device);
+
+      const token = jwt.sign(adminUser, env.ADMIN_JWT_SECRET, { expiresIn: '7d' });
 
       await createAuditLog({
         actor_name: env.ADMIN_NAME,
-        category: 'Device Security',
-        action_details: `New device login request pending authorization: ${realDeviceName}`,
+        category: 'Authentication',
+        action_details: `Admin signed in successfully from ${realDeviceName}`,
         ip_device: `${realDeviceName} (${clientIp})`,
       });
-    } else {
-      device.last_seen = new Date().toLocaleString();
-      device.device_name = realDeviceName;
-      device.ip_address = clientIp;
-    }
 
-    if (device.status === 'blocked') {
-      return res.status(403).json({
-        success: false,
-        accountStatus: 'Device Blocked',
-        message: 'This device has been blocked from accessing the Admin Portal.',
+      return res.json({
+        success: true,
+        message: 'Signed in successfully',
+        token,
+        user: adminUser,
       });
     }
 
-    if (device.status === 'pending_approval') {
-      return res.status(403).json({
-        success: false,
-        accountStatus: 'Device Pending Approval',
-        message: 'This device is pending authorization by the primary administrator.',
-      });
-    }
+    return res.status(401).json({ success: false, message: 'Invalid admin email or password' });
+  } catch (error) {
+    next(error);
+  }
+});
 
-    const adminUser = {
-      id: 1,
-      name: env.ADMIN_NAME,
-      email: env.ADMIN_EMAIL,
-      role: env.ADMIN_ROLE,
-    };
-
-    const token = jwt.sign(adminUser, env.ADMIN_JWT_SECRET, { expiresIn: '7d' });
+router.post('/auth/sign-out', async (req: Request, res: Response, next) => {
+  try {
+    const realDeviceName = parseDeviceName(req);
+    const clientIp = (req.headers['x-forwarded-for'] as string) || req.ip || '127.0.0.1';
 
     await createAuditLog({
       actor_name: env.ADMIN_NAME,
       category: 'Authentication',
-      action_details: `Admin signed in successfully from ${realDeviceName}`,
+      action_details: `Admin signed out from ${realDeviceName}`,
       ip_device: `${realDeviceName} (${clientIp})`,
     });
 
-    return res.json({
-      success: true,
-      message: 'Signed in successfully',
-      token,
-      user: adminUser,
-    });
+    res.json({ success: true, message: 'Signed out successfully' });
+  } catch (error) {
+    next(error);
   }
-
-  return res.status(401).json({ success: false, message: 'Invalid admin email or password' });
 });
 
-router.post('/auth/sign-out', async (req: Request, res: Response) => {
-  const realDeviceName = parseDeviceName(req);
-  const clientIp = (req.headers['x-forwarded-for'] as string) || req.ip || '127.0.0.1';
-
-  await createAuditLog({
-    actor_name: env.ADMIN_NAME,
-    category: 'Authentication',
-    action_details: `Admin signed out from ${realDeviceName}`,
-    ip_device: `${realDeviceName} (${clientIp})`,
-  });
-
-  res.json({ success: true, message: 'Signed out successfully' });
+router.get('/devices', async (req: Request, res: Response, next) => {
+  try {
+    const devices = await getAuthorizedDevicesFromDB();
+    res.json({ success: true, data: devices });
+  } catch (error) {
+    next(error);
+  }
 });
 
-router.get('/devices', (req: Request, res: Response) => {
-  res.json({ success: true, data: authorizedDevices });
+router.post('/devices/:id/approve', async (req: Request, res: Response, next) => {
+  try {
+    const dev = await updateDeviceStatusInDB(req.params.id, 'approved');
+    if (!dev) return res.status(404).json({ success: false, message: 'Device not found' });
+
+    await createAuditLog({
+      actor_name: env.ADMIN_NAME,
+      category: 'Device Security',
+      action_details: `Approved device: ${dev.device_name} (${dev.ip_address})`,
+      ip_device: parseDeviceName(req),
+    });
+
+    res.json({ success: true, message: 'Device approved successfully', data: dev });
+  } catch (error) {
+    next(error);
+  }
 });
 
-router.post('/devices/:id/approve', async (req: Request, res: Response) => {
-  const dev = authorizedDevices.find((d) => d.id === req.params.id || d.device_id === req.params.id);
-  if (!dev) return res.status(404).json({ success: false, message: 'Device not found' });
+router.post('/devices/:id/block', async (req: Request, res: Response, next) => {
+  try {
+    const dev = await updateDeviceStatusInDB(req.params.id, 'blocked');
+    if (!dev) return res.status(404).json({ success: false, message: 'Device not found' });
 
-  dev.status = 'approved';
-  dev.approved_at = new Date().toLocaleString();
+    await createAuditLog({
+      actor_name: env.ADMIN_NAME,
+      category: 'Device Security',
+      action_details: `Blocked device: ${dev.device_name} (${dev.ip_address})`,
+      ip_device: parseDeviceName(req),
+    });
 
-  await createAuditLog({
-    actor_name: env.ADMIN_NAME,
-    category: 'Device Security',
-    action_details: `Approved device: ${dev.device_name} (${dev.ip_address})`,
-    ip_device: parseDeviceName(req),
-  });
-
-  res.json({ success: true, message: 'Device approved successfully', data: dev });
+    res.json({ success: true, message: 'Device blocked successfully', data: dev });
+  } catch (error) {
+    next(error);
+  }
 });
 
-router.post('/devices/:id/block', async (req: Request, res: Response) => {
-  const dev = authorizedDevices.find((d) => d.id === req.params.id || d.device_id === req.params.id);
-  if (!dev) return res.status(404).json({ success: false, message: 'Device not found' });
+router.post('/devices/:id/unblock', async (req: Request, res: Response, next) => {
+  try {
+    const dev = await updateDeviceStatusInDB(req.params.id, 'approved');
+    if (!dev) return res.status(404).json({ success: false, message: 'Device not found' });
 
-  dev.status = 'blocked';
+    await createAuditLog({
+      actor_name: env.ADMIN_NAME,
+      category: 'Device Security',
+      action_details: `Unblocked device: ${dev.device_name} (${dev.ip_address})`,
+      ip_device: parseDeviceName(req),
+    });
 
-  await createAuditLog({
-    actor_name: env.ADMIN_NAME,
-    category: 'Device Security',
-    action_details: `Blocked device: ${dev.device_name} (${dev.ip_address})`,
-    ip_device: parseDeviceName(req),
-  });
-
-  res.json({ success: true, message: 'Device blocked successfully', data: dev });
-});
-
-router.post('/devices/:id/unblock', async (req: Request, res: Response) => {
-  const dev = authorizedDevices.find((d) => d.id === req.params.id || d.device_id === req.params.id);
-  if (!dev) return res.status(404).json({ success: false, message: 'Device not found' });
-
-  dev.status = 'approved';
-
-  await createAuditLog({
-    actor_name: env.ADMIN_NAME,
-    category: 'Device Security',
-    action_details: `Unblocked device: ${dev.device_name} (${dev.ip_address})`,
-    ip_device: parseDeviceName(req),
-  });
-
-  res.json({ success: true, message: 'Device unblocked successfully', data: dev });
+    res.json({ success: true, message: 'Device unblocked successfully', data: dev });
+  } catch (error) {
+    next(error);
+  }
 });
 
 // Protected Admin Routes Below
@@ -216,6 +229,7 @@ router.use(adminAuthGuard as any);
 router.get('/dashboard/sales-digest', async (req: Request, res: Response, next) => {
   try {
     const adminOrders = await getAllOrdersWithItems();
+    const sales = await getSalesDataFromDB();
     const totalOrders = adminOrders.length;
     const grossSales = adminOrders.reduce((sum, o) => sum + (o.total_amount || 0), 0);
     const dineInOrders = adminOrders.filter((o) => o.order_type === 'Dine-In').length;
@@ -235,7 +249,14 @@ router.get('/dashboard/sales-digest', async (req: Request, res: Response, next) 
         peakBusyHours: totalOrders > 0 ? '7:00 PM - 9:00 PM' : 'No Orders Yet',
         paymentSplit: { cash: grossSales, cardTransfer: 0 },
         hourlySales: [],
-        rows: adminOrders.map((o) => ({
+        rows: sales.length > 0 ? sales.map((s) => ({
+          fullDate: s.created_at,
+          channel: s.order_source,
+          totalOrders: 1,
+          grossRevenue: s.total_price,
+          discounts: 0,
+          netSales: s.total_price,
+        })) : adminOrders.map((o) => ({
           fullDate: o.created_at,
           channel: o.order_source,
           totalOrders: 1,
@@ -253,15 +274,28 @@ router.get('/dashboard/sales-digest', async (req: Request, res: Response, next) 
 router.get('/dashboard/item-category-sales', async (req: Request, res: Response, next) => {
   try {
     const adminOrders = await getAllOrdersWithItems();
+    const sales = await getSalesDataFromDB();
     const totalOrders = adminOrders.length;
     const grossSales = adminOrders.reduce((sum, o) => sum + (o.total_amount || 0), 0);
+
+    const categoryMap: Record<string, number> = {};
+    sales.forEach((s) => {
+      const cat = s.category_name || 'General';
+      categoryMap[cat] = (categoryMap[cat] || 0) + s.total_price;
+    });
+
+    const categoryRevenueList = Object.entries(categoryMap).map(([name, revenue]) => ({
+      name,
+      revenue,
+      percentage: grossSales > 0 ? Math.round((revenue / grossSales) * 100) : 0,
+    }));
 
     res.json({
       success: true,
       data: {
-        topDish: totalOrders > 0 ? 'Popular Menu Item' : 'No Sales Yet',
-        topCategory: totalOrders > 0 ? 'Main Category' : 'No Categories Sold Yet',
-        categoryRevenue: grossSales > 0 ? [{ name: 'Main Category', revenue: grossSales, percentage: 100 }] : [],
+        topDish: sales.length > 0 ? sales[0].item_name : (totalOrders > 0 ? 'Popular Menu Item' : 'No Sales Yet'),
+        topCategory: categoryRevenueList.length > 0 ? categoryRevenueList[0].name : (totalOrders > 0 ? 'Main Category' : 'No Categories Sold Yet'),
+        categoryRevenue: categoryRevenueList.length > 0 ? categoryRevenueList : (grossSales > 0 ? [{ name: 'Main Category', revenue: grossSales, percentage: 100 }] : []),
         categoryBestSellers: [],
         overallBestSellers: [],
       },
@@ -428,17 +462,19 @@ router.post('/categories', async (req: Request, res: Response, next) => {
       for (const a of addOns) {
         if (a.enabled !== false && String(a.add_on_name || a.addonName || a.name || '').trim()) {
           const aName = String(a.add_on_name || a.addonName || a.name).trim();
+          const pricingMode = a.pricing_mode || a.pricingMode || 'single';
           const sizePrices = Array.isArray(a.size_prices || a.sizePrices)
             ? (a.size_prices || a.sizePrices).filter((sp: any) => sp.enabled !== false)
             : [];
           const addOnRes = await query(
-            `INSERT INTO category_add_ons (category_id, add_on_name, size_pricing) VALUES ($1, $2, $3) RETURNING *;`,
-            [newCat.id, aName, JSON.stringify(sizePrices)]
+            `INSERT INTO category_add_ons (category_id, add_on_name, pricing_mode, size_pricing) VALUES ($1, $2, $3, $4) RETURNING *;`,
+            [newCat.id, aName, pricingMode, JSON.stringify(sizePrices)]
           );
           insertedAddOns.push({
             id: addOnRes.rows[0].id,
             enabled: true,
             add_on_name: addOnRes.rows[0].add_on_name,
+            pricing_mode: addOnRes.rows[0].pricing_mode,
             price: Number(a.price) || 0,
             size_prices: sizePrices,
           });
@@ -499,12 +535,13 @@ router.put('/categories/:id', async (req: Request, res: Response, next) => {
       for (const a of addOns) {
         if (a.enabled !== false && String(a.add_on_name || a.addonName || a.name || '').trim()) {
           const aName = String(a.add_on_name || a.addonName || a.name).trim();
+          const pricingMode = a.pricing_mode || a.pricingMode || 'single';
           const sizePrices = Array.isArray(a.size_prices || a.sizePrices)
             ? (a.size_prices || a.sizePrices).filter((sp: any) => sp.enabled !== false)
             : [];
           await query(
-            `INSERT INTO category_add_ons (category_id, add_on_name, size_pricing) VALUES ($1, $2, $3);`,
-            [id, aName, JSON.stringify(sizePrices)]
+            `INSERT INTO category_add_ons (category_id, add_on_name, pricing_mode, size_pricing) VALUES ($1, $2, $3, $4);`,
+            [id, aName, pricingMode, JSON.stringify(sizePrices)]
           );
         }
       }
@@ -902,7 +939,7 @@ router.post('/customers', async (req: Request, res: Response, next) => {
     const is_blocked = Boolean(req.body.is_blocked);
 
     const userRes = await query(
-      `INSERT INTO users (phone_number, name, is_verified, is_blocked)
+      `INSERT INTO customers (phone_number, name, is_verified, is_blocked)
        VALUES ($1, $2, true, $3)
        ON CONFLICT (phone_number) DO UPDATE SET name = EXCLUDED.name, is_blocked = EXCLUDED.is_blocked
        RETURNING *;`,
@@ -912,8 +949,8 @@ router.post('/customers', async (req: Request, res: Response, next) => {
 
     if (detailed_address) {
       await query(
-        `INSERT INTO customer_addresses (user_id, address_title, detailed_address, is_default)
-         VALUES ($1, 'Home', $2, true);`,
+        `INSERT INTO customer_addresses (customer_id, detailed_address, is_default)
+         VALUES ($1, $2, true);`,
         [user.id, detailed_address]
       );
     }
@@ -941,7 +978,7 @@ router.put('/customers/:id', async (req: Request, res: Response, next) => {
     const { name, phone_number, detailed_address, is_blocked } = req.body;
 
     const userRes = await query(
-      `UPDATE users
+      `UPDATE customers
        SET name = COALESCE($1, name),
            phone_number = COALESCE($2, phone_number),
            is_blocked = COALESCE($3, is_blocked)
@@ -956,8 +993,8 @@ router.put('/customers/:id', async (req: Request, res: Response, next) => {
 
     if (detailed_address !== undefined) {
       await query(
-        `INSERT INTO customer_addresses (user_id, address_title, detailed_address, is_default)
-         VALUES ($1, 'Home', $2, true);`,
+        `INSERT INTO customer_addresses (customer_id, detailed_address, is_default)
+         VALUES ($1, $2, true);`,
         [id, detailed_address]
       );
     }
@@ -971,7 +1008,7 @@ router.put('/customers/:id', async (req: Request, res: Response, next) => {
 router.delete('/customers/:id', async (req: Request, res: Response, next) => {
   try {
     const id = parseInt(req.params.id, 10);
-    const result = await query(`DELETE FROM users WHERE id = $1 RETURNING *;`, [id]);
+    const result = await query(`DELETE FROM customers WHERE id = $1 RETURNING *;`, [id]);
     if (result.rows.length === 0) {
       return res.status(404).json({ success: false, message: 'Customer not found' });
     }
@@ -985,7 +1022,7 @@ router.post('/customers/:id/toggle-block', async (req: Request, res: Response, n
   try {
     const id = parseInt(req.params.id, 10);
     const result = await query(
-      `UPDATE users SET is_blocked = NOT is_blocked WHERE id = $1 RETURNING *;`,
+      `UPDATE customers SET is_blocked = NOT is_blocked WHERE id = $1 RETURNING *;`,
       [id]
     );
 

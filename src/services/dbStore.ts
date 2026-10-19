@@ -40,6 +40,7 @@ export async function getAllCategoriesWithRelations() {
         id: a.id,
         enabled: true,
         add_on_name: a.add_on_name,
+        pricing_mode: a.pricing_mode || 'single',
         price: 0,
         size_prices: typeof a.size_pricing === 'string' ? JSON.parse(a.size_pricing) : (a.size_pricing || []),
       })),
@@ -87,21 +88,20 @@ export async function getAllComboDeals() {
 // ==========================================
 export async function getAllCustomersWithStats() {
   const custRes = await query(`
-    SELECT u.id, u.name, u.phone_number, u.email, u.is_blocked, u.created_at,
+    SELECT c.id, c.name, c.phone_number, c.is_blocked, c.created_at,
            COUNT(o.id)::int as total_orders,
            COALESCE(MAX(ca.detailed_address), '') as detailed_address
-    FROM users u
-    LEFT JOIN orders o ON (o.customer_phone = u.phone_number OR o.customer_id = u.id)
-    LEFT JOIN customer_addresses ca ON (ca.user_id = u.id AND ca.is_default = true)
-    GROUP BY u.id
-    ORDER BY u.id DESC;
+    FROM customers c
+    LEFT JOIN orders o ON (o.customer_phone = c.phone_number OR o.customer_id = c.id)
+    LEFT JOIN customer_addresses ca ON (ca.customer_id = c.id AND ca.is_default = true)
+    GROUP BY c.id
+    ORDER BY c.id DESC;
   `);
 
   return custRes.rows.map((c: any) => ({
     id: c.id,
     name: c.name || '',
     phone_number: c.phone_number,
-    email: c.email || '',
     detailed_address: c.detailed_address || '',
     is_blocked: Boolean(c.is_blocked),
     total_orders: Number(c.total_orders) || 0,
@@ -109,7 +109,7 @@ export async function getAllCustomersWithStats() {
 }
 
 // ==========================================
-// 4. ORDERS & POS
+// 4. ORDERS, POS & SALES
 // ==========================================
 export async function getAllOrdersWithItems() {
   const ordersRes = await query(`
@@ -123,8 +123,7 @@ export async function getAllOrdersWithItems() {
                  'selected_size', oi.selected_size,
                  'selected_add_ons', oi.selected_add_ons,
                  'quantity', oi.quantity,
-                 'unit_price', oi.unit_price,
-                 'special_instructions', oi.special_instructions
+                 'unit_price', oi.unit_price
                )
              ) FILTER (WHERE oi.id IS NOT NULL), '[]'
            ) as items
@@ -146,7 +145,6 @@ export async function getAllOrdersWithItems() {
     subtotal: Number(o.subtotal) || 0,
     delivery_fee: Number(o.delivery_fee) || 0,
     total_amount: Number(o.total_amount) || 0,
-    status: o.status || 'Just Placed',
     created_at: o.created_at ? new Date(o.created_at).toLocaleString() : new Date().toLocaleString(),
     items: typeof o.items === 'string' ? JSON.parse(o.items) : (o.items || []),
   }));
@@ -157,8 +155,8 @@ export async function createOrderInDatabase(orderData: any) {
   const nextOrderNum = `#ORD-${1001 + (countRes.rows[0]?.total || 0)}`;
 
   const orderRes = await query(
-    `INSERT INTO orders (order_number, order_source, order_type, customer_id, customer_name, customer_phone, delivery_address, subtotal, delivery_fee, total_amount, status)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+    `INSERT INTO orders (order_number, order_source, order_type, customer_id, customer_name, customer_phone, delivery_address, subtotal, delivery_fee, total_amount)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
      RETURNING *;`,
     [
       nextOrderNum,
@@ -171,7 +169,6 @@ export async function createOrderInDatabase(orderData: any) {
       orderData.subtotal || 0,
       orderData.delivery_fee || 0,
       orderData.total_amount || 0,
-      'Just Placed',
     ]
   );
 
@@ -185,15 +182,32 @@ export async function createOrderInDatabase(orderData: any) {
       const selectedAddOns = JSON.stringify(item.selected_add_ons || item.addOns || []);
       const qty = Number(item.quantity) || 1;
       const unitPrice = Number(item.unit_price || item.sizePrice || item.price) || 0;
-      const specialInstructions = item.special_instructions || item.instructions || null;
+      const lineTotal = unitPrice * qty;
 
       const itemRes = await query(
-        `INSERT INTO order_items (order_id, item_name, selected_size, selected_add_ons, quantity, unit_price, special_instructions)
-         VALUES ($1, $2, $3, $4, $5, $6, $7)
+        `INSERT INTO order_items (order_id, item_name, selected_size, selected_add_ons, quantity, unit_price)
+         VALUES ($1, $2, $3, $4, $5, $6)
          RETURNING *;`,
-        [insertedOrder.id, itemName, selectedSize, selectedAddOns, qty, unitPrice, specialInstructions]
+        [insertedOrder.id, itemName, selectedSize, selectedAddOns, qty, unitPrice]
       );
       insertedItems.push(itemRes.rows[0]);
+
+      // Automatically Insert Sale Row into Sales Table
+      await query(
+        `INSERT INTO sales (order_id, order_number, order_source, order_type, item_name, category_name, quantity, unit_price, total_price, sale_date)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, CURRENT_DATE);`,
+        [
+          insertedOrder.id,
+          insertedOrder.order_number,
+          insertedOrder.order_source,
+          insertedOrder.order_type,
+          itemName,
+          item.category_name || item.category || 'General',
+          qty,
+          unitPrice,
+          lineTotal,
+        ]
+      );
     }
   }
 
@@ -202,6 +216,24 @@ export async function createOrderInDatabase(orderData: any) {
     created_at: new Date(insertedOrder.created_at).toLocaleString(),
     items: insertedItems,
   };
+}
+
+export async function getSalesDataFromDB() {
+  const salesRes = await query(`SELECT * FROM sales ORDER BY id DESC;`);
+  return salesRes.rows.map((s: any) => ({
+    id: s.id,
+    order_id: s.order_id,
+    order_number: s.order_number,
+    order_source: s.order_source,
+    order_type: s.order_type,
+    item_name: s.item_name,
+    category_name: s.category_name || 'General',
+    quantity: s.quantity,
+    unit_price: Number(s.unit_price),
+    total_price: Number(s.total_price),
+    sale_date: s.sale_date,
+    created_at: s.created_at ? new Date(s.created_at).toLocaleString() : new Date().toLocaleString(),
+  }));
 }
 
 // ==========================================
@@ -230,7 +262,7 @@ export async function getSystemSettingsFromDB() {
 }
 
 // ==========================================
-// 6. AUDIT LOGS MANAGEMENT
+// 6. AUDIT LOGS & AUTHORIZED DEVICES
 // ==========================================
 export async function createAuditLog(log: {
   actor_name: string;
@@ -261,4 +293,50 @@ export async function getAuditLogsFromDB() {
     ip_device: row.ip_device || 'N/A',
     timestamp: row.timestamp ? new Date(row.timestamp).toLocaleString() : new Date().toLocaleString(),
   }));
+}
+
+export async function getAuthorizedDevicesFromDB() {
+  const res = await query(`SELECT * FROM authorized_devices ORDER BY id DESC;`);
+  return res.rows.map((d: any) => ({
+    id: String(d.id),
+    device_id: d.device_id,
+    device_name: d.device_name,
+    ip_address: d.ip_address || '',
+    status: d.status,
+    first_seen: d.first_seen ? new Date(d.first_seen).toLocaleString() : new Date().toLocaleString(),
+    last_seen: d.last_seen ? new Date(d.last_seen).toLocaleString() : new Date().toLocaleString(),
+    approved_at: d.approved_at ? new Date(d.approved_at).toLocaleString() : undefined,
+  }));
+}
+
+export async function upsertAuthorizedDeviceInDB(dev: {
+  device_id: string;
+  device_name: string;
+  ip_address: string;
+  status: string;
+}) {
+  const isApproved = dev.status === 'approved';
+  const res = await query(
+    `INSERT INTO authorized_devices (device_id, device_name, ip_address, status, approved_at)
+     VALUES ($1, $2, $3, $4, $5)
+     ON CONFLICT (device_id) DO UPDATE
+     SET device_name = EXCLUDED.device_name,
+         ip_address = EXCLUDED.ip_address,
+         last_seen = CURRENT_TIMESTAMP
+     RETURNING *;`,
+    [dev.device_id, dev.device_name, dev.ip_address, dev.status, isApproved ? new Date() : null]
+  );
+  return res.rows[0];
+}
+
+export async function updateDeviceStatusInDB(deviceId: string, status: string) {
+  const isApproved = status === 'approved';
+  const res = await query(
+    `UPDATE authorized_devices
+     SET status = $1, approved_at = CASE WHEN $2::boolean THEN CURRENT_TIMESTAMP ELSE approved_at END
+     WHERE device_id = $3 OR id::text = $3
+     RETURNING *;`,
+    [status, isApproved, deviceId]
+  );
+  return res.rows[0];
 }
