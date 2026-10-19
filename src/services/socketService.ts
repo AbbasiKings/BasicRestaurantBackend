@@ -12,10 +12,10 @@ export function initSocketServer(httpServer: HttpServer): SocketIOServer {
   });
 
   io.on('connection', (socket) => {
-    console.log(`🔌 [Socket.io] Admin / Client connected: ${socket.id}`);
+    console.log(`[Socket.io] Admin / Client connected: ${socket.id}`);
 
     socket.on('disconnect', () => {
-      console.log(`🔌 [Socket.io] Client disconnected: ${socket.id}`);
+      console.log(`[Socket.io] Client disconnected: ${socket.id}`);
     });
   });
 
@@ -24,7 +24,7 @@ export function initSocketServer(httpServer: HttpServer): SocketIOServer {
 
 export function broadcastNewOrder(order: any) {
   if (io) {
-    console.log(`📡 [Socket.io] Broadcasting new order ${order.order_number}`);
+    console.log(`[Socket.io] Broadcasting new order ${order.order_number}`);
     io.emit('new_order', order);
   }
 }

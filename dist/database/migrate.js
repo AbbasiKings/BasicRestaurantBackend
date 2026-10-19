@@ -6,6 +6,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 const pg_1 = __importDefault(require("pg"));
 const config_js_1 = require("../config/config.js");
 const db_js_1 = require("../config/db.js");
+const strings_js_1 = require("../constants/strings.js");
 const { Client } = pg_1.default;
 async function ensureDatabaseExists() {
     const rootClient = new Client({
@@ -20,16 +21,16 @@ async function ensureDatabaseExists() {
         await rootClient.connect();
         const res = await rootClient.query(`SELECT 1 FROM pg_database WHERE datname = $1`, [config_js_1.env.DB_NAME]);
         if (res.rowCount === 0) {
-            console.log(`⏳ Database "${config_js_1.env.DB_NAME}" does not exist. Creating...`);
+            console.log(`[DB] Database "${config_js_1.env.DB_NAME}" does not exist. Creating...`);
             await rootClient.query(`CREATE DATABASE "${config_js_1.env.DB_NAME}"`);
-            console.log(`✅ Database "${config_js_1.env.DB_NAME}" created successfully.`);
+            console.log(`[DB] Database "${config_js_1.env.DB_NAME}" created successfully.`);
         }
         else {
-            console.log(`✅ Database "${config_js_1.env.DB_NAME}" exists.`);
+            console.log(`[DB] Database "${config_js_1.env.DB_NAME}" exists.`);
         }
     }
     catch (error) {
-        console.log('ℹ️ Skipping root database creation check (Proceeding to migrate target database).');
+        console.log('[DB] Skipping root database creation check (Proceeding to migrate target database).');
     }
     finally {
         try {
@@ -40,7 +41,7 @@ async function ensureDatabaseExists() {
 }
 async function runMigrations() {
     await ensureDatabaseExists();
-    console.log('⏳ Running PostgreSQL Schema Migrations & Alterations...');
+    console.log(strings_js_1.STRINGS.MIGRATION_START);
     const migrationSQL = `
     -- 1. Migration Alterations for Backwards Compatibility
 
@@ -249,10 +250,10 @@ async function runMigrations() {
   `;
     try {
         await db_js_1.pool.query(migrationSQL);
-        console.log('✅ Success migration: All database tables & schema corrections applied successfully.');
+        console.log(`[DB] ${strings_js_1.STRINGS.MIGRATION_SUCCESS}`);
     }
     catch (error) {
-        console.error('❌ Migration failed:', error);
+        console.error(`[DB ERROR] ${strings_js_1.STRINGS.MIGRATION_FAILED}`, error);
     }
     finally {
         await db_js_1.pool.end();

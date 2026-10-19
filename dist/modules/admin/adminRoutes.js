@@ -4,11 +4,15 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 };
 Object.defineProperty(exports, "__esModule", { value: true });
 const express_1 = require("express");
+const bcryptjs_1 = __importDefault(require("bcryptjs"));
 const jsonwebtoken_1 = __importDefault(require("jsonwebtoken"));
 const fs_1 = __importDefault(require("fs"));
 const path_1 = __importDefault(require("path"));
 const config_js_1 = require("../../config/config.js");
 const db_js_1 = require("../../config/db.js");
+const strings_js_1 = require("../../constants/strings.js");
+const values_js_1 = require("../../constants/values.js");
+const enums_js_1 = require("../../types/enums.js");
 const adminAuthGuard_js_1 = require("../../middleware/adminAuthGuard.js");
 const uploadService_js_1 = require("../../services/uploadService.js");
 const deviceService_js_1 = require("../../services/deviceService.js");
@@ -37,80 +41,86 @@ router.post('/auth/sign-in', async (req, res, next) => {
     try {
         const { email, password, deviceId } = req.body;
         if (!email || !password) {
-            return res.status(400).json({ success: false, message: 'Email and password required' });
+            return res.status(400).json({ success: false, message: strings_js_1.STRINGS.EMAIL_PASSWORD_REQUIRED });
         }
-        if (email.trim().toLowerCase() === config_js_1.env.ADMIN_EMAIL.toLowerCase() &&
-            password === config_js_1.env.ADMIN_PASSWORD) {
-            const realDeviceName = (0, deviceService_js_1.parseDeviceName)(req);
-            const clientIp = req.headers['x-forwarded-for'] || req.ip || '127.0.0.1';
-            const clientDeviceId = deviceId || 'dev_primary_001';
-            const allDevices = await (0, dbStore_js_1.getAuthorizedDevicesFromDB)();
-            let device = allDevices.find((d) => d.device_id === clientDeviceId);
-            if (allDevices.length === 0) {
-                device = await (0, dbStore_js_1.upsertAuthorizedDeviceInDB)({
-                    device_id: clientDeviceId,
-                    device_name: realDeviceName,
-                    ip_address: clientIp,
-                    status: 'approved',
-                });
-            }
-            else if (!device) {
-                device = await (0, dbStore_js_1.upsertAuthorizedDeviceInDB)({
-                    device_id: clientDeviceId,
-                    device_name: realDeviceName,
-                    ip_address: clientIp,
-                    status: 'pending_approval',
-                });
-                await (0, dbStore_js_1.createAuditLog)({
-                    actor_name: config_js_1.env.ADMIN_NAME,
-                    category: 'Device Security',
-                    action_details: `New device login request pending authorization: ${realDeviceName}`,
-                    ip_device: `${realDeviceName} (${clientIp})`,
-                });
-            }
-            else {
-                await (0, dbStore_js_1.upsertAuthorizedDeviceInDB)({
-                    device_id: clientDeviceId,
-                    device_name: realDeviceName,
-                    ip_address: clientIp,
-                    status: device.status,
-                });
-            }
-            if (device && device.status === 'blocked') {
-                return res.status(403).json({
-                    success: false,
-                    accountStatus: 'Device Blocked',
-                    message: 'This device has been blocked from accessing the Admin Portal.',
-                });
-            }
-            if (device && device.status === 'pending_approval') {
-                return res.status(403).json({
-                    success: false,
-                    accountStatus: 'Device Pending Approval',
-                    message: 'This device is pending authorization by the primary administrator.',
-                });
-            }
-            const adminUser = {
-                id: 1,
-                name: config_js_1.env.ADMIN_NAME,
-                email: config_js_1.env.ADMIN_EMAIL,
-                role: config_js_1.env.ADMIN_ROLE,
-            };
-            const token = jsonwebtoken_1.default.sign(adminUser, config_js_1.env.ADMIN_JWT_SECRET, { expiresIn: '7d' });
+        const cleanEmail = String(email).trim().toLowerCase();
+        const adminRes = await (0, db_js_1.query)(`SELECT * FROM admins WHERE LOWER(email) = $1;`, [cleanEmail]);
+        if (adminRes.rows.length === 0) {
+            return res.status(401).json({ success: false, message: strings_js_1.STRINGS.INVALID_ADMIN_CREDENTIALS });
+        }
+        const admin = adminRes.rows[0];
+        const isPasswordValid = await bcryptjs_1.default.compare(String(password), admin.password_hash);
+        if (!isPasswordValid) {
+            return res.status(401).json({ success: false, message: strings_js_1.STRINGS.INVALID_ADMIN_CREDENTIALS });
+        }
+        const realDeviceName = (0, deviceService_js_1.parseDeviceName)(req);
+        const clientIp = req.headers['x-forwarded-for'] || req.ip || '127.0.0.1';
+        const clientDeviceId = deviceId || 'dev_primary_001';
+        const allDevices = await (0, dbStore_js_1.getAuthorizedDevicesFromDB)();
+        let device = allDevices.find((d) => d.device_id === clientDeviceId);
+        if (allDevices.length === 0) {
+            device = await (0, dbStore_js_1.upsertAuthorizedDeviceInDB)({
+                device_id: clientDeviceId,
+                device_name: realDeviceName,
+                ip_address: clientIp,
+                status: enums_js_1.DeviceStatus.APPROVED,
+            });
+        }
+        else if (!device) {
+            device = await (0, dbStore_js_1.upsertAuthorizedDeviceInDB)({
+                device_id: clientDeviceId,
+                device_name: realDeviceName,
+                ip_address: clientIp,
+                status: enums_js_1.DeviceStatus.PENDING_APPROVAL,
+            });
             await (0, dbStore_js_1.createAuditLog)({
-                actor_name: config_js_1.env.ADMIN_NAME,
-                category: 'Authentication',
-                action_details: `Admin signed in successfully from ${realDeviceName}`,
+                actor_name: admin.name,
+                category: 'Device Security',
+                action_details: `New device login request pending authorization: ${realDeviceName}`,
                 ip_device: `${realDeviceName} (${clientIp})`,
             });
-            return res.json({
-                success: true,
-                message: 'Signed in successfully',
-                token,
-                user: adminUser,
+        }
+        else {
+            await (0, dbStore_js_1.upsertAuthorizedDeviceInDB)({
+                device_id: clientDeviceId,
+                device_name: realDeviceName,
+                ip_address: clientIp,
+                status: device.status,
             });
         }
-        return res.status(401).json({ success: false, message: 'Invalid admin email or password' });
+        if (device && device.status === enums_js_1.DeviceStatus.BLOCKED) {
+            return res.status(403).json({
+                success: false,
+                accountStatus: 'Device Blocked',
+                message: strings_js_1.STRINGS.DEVICE_BLOCKED,
+            });
+        }
+        if (device && device.status === enums_js_1.DeviceStatus.PENDING_APPROVAL) {
+            return res.status(403).json({
+                success: false,
+                accountStatus: 'Device Pending Approval',
+                message: strings_js_1.STRINGS.DEVICE_PENDING_APPROVAL,
+            });
+        }
+        const adminUser = {
+            id: admin.id,
+            name: admin.name,
+            email: admin.email,
+            role: admin.role,
+        };
+        const token = jsonwebtoken_1.default.sign(adminUser, config_js_1.env.ADMIN_JWT_SECRET, { expiresIn: values_js_1.VALUES.JWT_DEFAULT_EXPIRES });
+        await (0, dbStore_js_1.createAuditLog)({
+            actor_name: admin.name,
+            category: 'Authentication',
+            action_details: `Admin signed in successfully from ${realDeviceName}`,
+            ip_device: `${realDeviceName} (${clientIp})`,
+        });
+        return res.json({
+            success: true,
+            message: strings_js_1.STRINGS.SIGNED_IN_SUCCESS,
+            token,
+            user: adminUser,
+        });
     }
     catch (error) {
         next(error);
@@ -121,12 +131,12 @@ router.post('/auth/sign-out', async (req, res, next) => {
         const realDeviceName = (0, deviceService_js_1.parseDeviceName)(req);
         const clientIp = req.headers['x-forwarded-for'] || req.ip || '127.0.0.1';
         await (0, dbStore_js_1.createAuditLog)({
-            actor_name: config_js_1.env.ADMIN_NAME,
+            actor_name: req.admin?.name || config_js_1.env.ADMIN_NAME,
             category: 'Authentication',
             action_details: `Admin signed out from ${realDeviceName}`,
             ip_device: `${realDeviceName} (${clientIp})`,
         });
-        res.json({ success: true, message: 'Signed out successfully' });
+        res.json({ success: true, message: strings_js_1.STRINGS.SIGNED_OUT_SUCCESS });
     }
     catch (error) {
         next(error);
@@ -143,16 +153,16 @@ router.get('/devices', async (req, res, next) => {
 });
 router.post('/devices/:id/approve', async (req, res, next) => {
     try {
-        const dev = await (0, dbStore_js_1.updateDeviceStatusInDB)(req.params.id, 'approved');
+        const dev = await (0, dbStore_js_1.updateDeviceStatusInDB)(req.params.id, enums_js_1.DeviceStatus.APPROVED);
         if (!dev)
-            return res.status(404).json({ success: false, message: 'Device not found' });
+            return res.status(404).json({ success: false, message: strings_js_1.STRINGS.DEVICE_NOT_FOUND });
         await (0, dbStore_js_1.createAuditLog)({
-            actor_name: config_js_1.env.ADMIN_NAME,
+            actor_name: req.admin?.name || config_js_1.env.ADMIN_NAME,
             category: 'Device Security',
             action_details: `Approved device: ${dev.device_name} (${dev.ip_address})`,
             ip_device: (0, deviceService_js_1.parseDeviceName)(req),
         });
-        res.json({ success: true, message: 'Device approved successfully', data: dev });
+        res.json({ success: true, message: strings_js_1.STRINGS.DEVICE_APPROVED_SUCCESS, data: dev });
     }
     catch (error) {
         next(error);
@@ -160,16 +170,16 @@ router.post('/devices/:id/approve', async (req, res, next) => {
 });
 router.post('/devices/:id/block', async (req, res, next) => {
     try {
-        const dev = await (0, dbStore_js_1.updateDeviceStatusInDB)(req.params.id, 'blocked');
+        const dev = await (0, dbStore_js_1.updateDeviceStatusInDB)(req.params.id, enums_js_1.DeviceStatus.BLOCKED);
         if (!dev)
-            return res.status(404).json({ success: false, message: 'Device not found' });
+            return res.status(404).json({ success: false, message: strings_js_1.STRINGS.DEVICE_NOT_FOUND });
         await (0, dbStore_js_1.createAuditLog)({
-            actor_name: config_js_1.env.ADMIN_NAME,
+            actor_name: req.admin?.name || config_js_1.env.ADMIN_NAME,
             category: 'Device Security',
             action_details: `Blocked device: ${dev.device_name} (${dev.ip_address})`,
             ip_device: (0, deviceService_js_1.parseDeviceName)(req),
         });
-        res.json({ success: true, message: 'Device blocked successfully', data: dev });
+        res.json({ success: true, message: strings_js_1.STRINGS.DEVICE_BLOCKED_SUCCESS, data: dev });
     }
     catch (error) {
         next(error);
@@ -177,16 +187,16 @@ router.post('/devices/:id/block', async (req, res, next) => {
 });
 router.post('/devices/:id/unblock', async (req, res, next) => {
     try {
-        const dev = await (0, dbStore_js_1.updateDeviceStatusInDB)(req.params.id, 'approved');
+        const dev = await (0, dbStore_js_1.updateDeviceStatusInDB)(req.params.id, enums_js_1.DeviceStatus.APPROVED);
         if (!dev)
-            return res.status(404).json({ success: false, message: 'Device not found' });
+            return res.status(404).json({ success: false, message: strings_js_1.STRINGS.DEVICE_NOT_FOUND });
         await (0, dbStore_js_1.createAuditLog)({
-            actor_name: config_js_1.env.ADMIN_NAME,
+            actor_name: req.admin?.name || config_js_1.env.ADMIN_NAME,
             category: 'Device Security',
             action_details: `Unblocked device: ${dev.device_name} (${dev.ip_address})`,
             ip_device: (0, deviceService_js_1.parseDeviceName)(req),
         });
-        res.json({ success: true, message: 'Device unblocked successfully', data: dev });
+        res.json({ success: true, message: strings_js_1.STRINGS.DEVICE_UNBLOCKED_SUCCESS, data: dev });
     }
     catch (error) {
         next(error);
@@ -203,9 +213,9 @@ router.get('/dashboard/sales-digest', async (req, res, next) => {
         const sales = await (0, dbStore_js_1.getSalesDataFromDB)();
         const totalOrders = adminOrders.length;
         const grossSales = adminOrders.reduce((sum, o) => sum + (o.total_amount || 0), 0);
-        const dineInOrders = adminOrders.filter((o) => o.order_type === 'Dine-In').length;
-        const takeawayOrders = adminOrders.filter((o) => o.order_type === 'Takeaway').length;
-        const deliveryOrders = adminOrders.filter((o) => o.order_type === 'Delivery').length;
+        const dineInOrders = adminOrders.filter((o) => o.order_type === enums_js_1.OrderType.DINE_IN).length;
+        const takeawayOrders = adminOrders.filter((o) => o.order_type === enums_js_1.OrderType.TAKEAWAY).length;
+        const deliveryOrders = adminOrders.filter((o) => o.order_type === enums_js_1.OrderType.DELIVERY).length;
         const averageOrderValue = totalOrders > 0 ? Math.round(grossSales / totalOrders) : 0;
         res.json({
             success: true,
@@ -307,10 +317,10 @@ router.post('/pos/order', async (req, res, next) => {
     try {
         const { orderType, customerName, customerPhone, deliveryAddress, items, totalAmount } = req.body;
         const settings = await (0, dbStore_js_1.getSystemSettingsFromDB)();
-        const deliveryFee = orderType === 'Delivery' ? (Number(settings.delivery_fee) || 150) : 0;
+        const deliveryFee = orderType === enums_js_1.OrderType.DELIVERY ? (Number(settings.delivery_fee) || values_js_1.VALUES.DEFAULT_DELIVERY_FEE) : 0;
         const newOrder = await (0, dbStore_js_1.createOrderInDatabase)({
-            order_source: 'POS',
-            order_type: orderType || 'Dine-In',
+            order_source: enums_js_1.OrderSource.POS,
+            order_type: orderType || enums_js_1.OrderType.DINE_IN,
             customer_id: null,
             customer_name: customerName || null,
             customer_phone: customerPhone || null,
@@ -321,12 +331,12 @@ router.post('/pos/order', async (req, res, next) => {
             items: items || [],
         });
         await (0, dbStore_js_1.createAuditLog)({
-            actor_name: config_js_1.env.ADMIN_NAME,
+            actor_name: req.admin?.name || config_js_1.env.ADMIN_NAME,
             category: 'POS Order',
             action_details: `Placed POS Order ${newOrder.order_number} (${orderType}) for ${customerName || 'Walk-in Guest'} (Rs. ${totalAmount})`,
             ip_device: (0, deviceService_js_1.parseDeviceName)(req),
         });
-        res.status(201).json({ success: true, message: 'POS Order placed successfully', order: newOrder });
+        res.status(201).json({ success: true, message: strings_js_1.STRINGS.ORDER_PLACED_SUCCESS, order: newOrder });
     }
     catch (error) {
         next(error);
@@ -363,7 +373,7 @@ router.get('/orders/:id', async (req, res, next) => {
         const orders = await (0, dbStore_js_1.getAllOrdersWithItems)();
         const order = orders.find((o) => o.id === id);
         if (!order)
-            return res.status(404).json({ success: false, message: 'Order not found' });
+            return res.status(404).json({ success: false, message: strings_js_1.STRINGS.ORDER_NOT_FOUND });
         res.json({ success: true, data: order });
     }
     catch (error) {
@@ -410,9 +420,10 @@ router.post('/categories', async (req, res, next) => {
             for (const a of addOns) {
                 if (a.enabled !== false && String(a.add_on_name || a.addonName || a.name || '').trim()) {
                     const aName = String(a.add_on_name || a.addonName || a.name).trim();
-                    const pricingMode = a.pricing_mode || a.pricingMode || 'single';
-                    const sizePrices = Array.isArray(a.size_prices || a.sizePrices)
-                        ? (a.size_prices || a.sizePrices).filter((sp) => sp.enabled !== false)
+                    const pricingMode = a.pricing_mode || a.pricingMode || enums_js_1.PricingMode.SINGLE;
+                    const sizePricesArr = a.size_prices || a.sizePrices;
+                    const sizePrices = Array.isArray(sizePricesArr)
+                        ? sizePricesArr.filter((sp) => sp.enabled !== false)
                         : [];
                     const addOnRes = await (0, db_js_1.query)(`INSERT INTO category_add_ons (category_id, add_on_name, pricing_mode, size_pricing) VALUES ($1, $2, $3, $4) RETURNING *;`, [newCat.id, aName, pricingMode, JSON.stringify(sizePrices)]);
                     insertedAddOns.push({
@@ -428,7 +439,7 @@ router.post('/categories', async (req, res, next) => {
         }
         res.status(201).json({
             success: true,
-            message: 'Category created',
+            message: strings_js_1.STRINGS.CATEGORY_CREATED,
             data: {
                 id: newCat.id,
                 name: newCat.name,
@@ -449,7 +460,7 @@ router.put('/categories/:id', async (req, res, next) => {
         const { name, is_active, sizes, addOns } = req.body;
         const checkRes = await (0, db_js_1.query)(`SELECT * FROM categories WHERE id = $1;`, [id]);
         if (checkRes.rows.length === 0) {
-            return res.status(404).json({ success: false, message: 'Category not found' });
+            return res.status(404).json({ success: false, message: strings_js_1.STRINGS.CATEGORY_NOT_FOUND });
         }
         if (name !== undefined) {
             await (0, db_js_1.query)(`UPDATE categories SET name = $1 WHERE id = $2;`, [name, id]);
@@ -472,9 +483,10 @@ router.put('/categories/:id', async (req, res, next) => {
             for (const a of addOns) {
                 if (a.enabled !== false && String(a.add_on_name || a.addonName || a.name || '').trim()) {
                     const aName = String(a.add_on_name || a.addonName || a.name).trim();
-                    const pricingMode = a.pricing_mode || a.pricingMode || 'single';
-                    const sizePrices = Array.isArray(a.size_prices || a.sizePrices)
-                        ? (a.size_prices || a.sizePrices).filter((sp) => sp.enabled !== false)
+                    const pricingMode = a.pricing_mode || a.pricingMode || enums_js_1.PricingMode.SINGLE;
+                    const sizePricesArr = a.size_prices || a.sizePrices;
+                    const sizePrices = Array.isArray(sizePricesArr)
+                        ? sizePricesArr.filter((sp) => sp.enabled !== false)
                         : [];
                     await (0, db_js_1.query)(`INSERT INTO category_add_ons (category_id, add_on_name, pricing_mode, size_pricing) VALUES ($1, $2, $3, $4);`, [id, aName, pricingMode, JSON.stringify(sizePrices)]);
                 }
@@ -482,7 +494,7 @@ router.put('/categories/:id', async (req, res, next) => {
         }
         const updatedCategories = await (0, dbStore_js_1.getAllCategoriesWithRelations)();
         const updatedCat = updatedCategories.find((c) => c.id === id);
-        res.json({ success: true, message: 'Category updated', data: updatedCat });
+        res.json({ success: true, message: strings_js_1.STRINGS.CATEGORY_UPDATED, data: updatedCat });
     }
     catch (error) {
         next(error);
@@ -493,10 +505,10 @@ router.delete('/categories/:id', async (req, res, next) => {
         const id = parseInt(req.params.id, 10);
         const checkRes = await (0, db_js_1.query)(`SELECT * FROM categories WHERE id = $1;`, [id]);
         if (checkRes.rows.length === 0) {
-            return res.status(404).json({ success: false, message: 'Category not found' });
+            return res.status(404).json({ success: false, message: strings_js_1.STRINGS.CATEGORY_NOT_FOUND });
         }
         await (0, db_js_1.query)(`DELETE FROM categories WHERE id = $1;`, [id]);
-        res.json({ success: true, message: 'Category deleted successfully' });
+        res.json({ success: true, message: strings_js_1.STRINGS.CATEGORY_DELETED });
     }
     catch (error) {
         next(error);
@@ -516,20 +528,14 @@ router.get('/menu', async (req, res, next) => {
 });
 router.post('/menu', async (req, res, next) => {
     try {
-        const category_id = parseInt(req.body.category_id, 10) || 1;
-        const name = req.body.name || 'New Item';
-        const description = req.body.description || '';
-        const image_url = req.body.image_url || '';
-        const is_time_limited = Boolean(req.body.is_time_limited);
-        const valid_from = req.body.valid_from || null;
-        const valid_to = req.body.valid_to || null;
+        const { category_id, name, description, image_url, is_time_limited, valid_from, valid_to } = req.body;
         const result = await (0, db_js_1.query)(`INSERT INTO menu_items (category_id, name, description, image_url, is_time_limited, valid_from, valid_to, is_active)
        VALUES ($1, $2, $3, $4, $5, $6, $7, true)
-       RETURNING *;`, [category_id, name, description, image_url, is_time_limited, valid_from, valid_to]);
+       RETURNING *;`, [category_id || 1, name || 'New Item', description || '', image_url || '', Boolean(is_time_limited), valid_from || null, valid_to || null]);
         const inserted = result.rows[0];
         res.status(201).json({
             success: true,
-            message: 'Menu item created',
+            message: strings_js_1.STRINGS.MENU_ITEM_CREATED,
             data: {
                 id: inserted.id,
                 category_id: inserted.category_id,
@@ -553,7 +559,7 @@ router.put('/menu/:id', async (req, res, next) => {
         const id = parseInt(req.params.id, 10);
         const checkRes = await (0, db_js_1.query)(`SELECT * FROM menu_items WHERE id = $1;`, [id]);
         if (checkRes.rows.length === 0) {
-            return res.status(404).json({ success: false, message: 'Menu item not found' });
+            return res.status(404).json({ success: false, message: strings_js_1.STRINGS.MENU_ITEM_NOT_FOUND });
         }
         const currentItem = checkRes.rows[0];
         if (req.body.image_url && req.body.image_url !== currentItem.image_url) {
@@ -570,7 +576,7 @@ router.put('/menu/:id', async (req, res, next) => {
         const updated = updateRes.rows[0];
         res.json({
             success: true,
-            message: 'Menu item updated',
+            message: strings_js_1.STRINGS.MENU_ITEM_UPDATED,
             data: {
                 id: updated.id,
                 category_id: updated.category_id,
@@ -594,10 +600,10 @@ router.post('/menu/:id/toggle', async (req, res, next) => {
         const id = parseInt(req.params.id, 10);
         const result = await (0, db_js_1.query)(`UPDATE menu_items SET is_active = NOT is_active WHERE id = $1 RETURNING *;`, [id]);
         if (result.rows.length === 0) {
-            return res.status(404).json({ success: false, message: 'Menu item not found' });
+            return res.status(404).json({ success: false, message: strings_js_1.STRINGS.MENU_ITEM_NOT_FOUND });
         }
         const item = result.rows[0];
-        res.json({ success: true, message: `Menu item ${item.is_active ? 'enabled' : 'disabled'}`, data: item });
+        res.json({ success: true, message: item.is_active ? strings_js_1.STRINGS.MENU_ITEM_ENABLED : strings_js_1.STRINGS.MENU_ITEM_DISABLED, data: item });
     }
     catch (error) {
         next(error);
@@ -608,11 +614,11 @@ router.delete('/menu/:id', async (req, res, next) => {
         const id = parseInt(req.params.id, 10);
         const checkRes = await (0, db_js_1.query)(`SELECT * FROM menu_items WHERE id = $1;`, [id]);
         if (checkRes.rows.length === 0) {
-            return res.status(404).json({ success: false, message: 'Menu item not found' });
+            return res.status(404).json({ success: false, message: strings_js_1.STRINGS.MENU_ITEM_NOT_FOUND });
         }
         deleteOldUploadFile(checkRes.rows[0].image_url);
         await (0, db_js_1.query)(`DELETE FROM menu_items WHERE id = $1;`, [id]);
-        res.json({ success: true, message: 'Menu item deleted' });
+        res.json({ success: true, message: strings_js_1.STRINGS.MENU_ITEM_DELETED });
     }
     catch (error) {
         next(error);
@@ -639,31 +645,24 @@ router.post('/deals', async (req, res, next) => {
         catch {
             includedItems = [];
         }
-        const name = req.body.name || 'New Combo Deal';
-        const description = req.body.description || '';
-        const package_price = Number(req.body.package_price) || 0;
-        const priority_order = Number(req.body.priority_order) || 1;
-        const image_url = req.body.image_url || '';
-        const is_time_limited = Boolean(req.body.is_time_limited);
-        const valid_from = req.body.valid_from || null;
-        const valid_to = req.body.valid_to || null;
+        const { name, description, package_price, priority_order, image_url, is_time_limited, valid_from, valid_to } = req.body;
         const result = await (0, db_js_1.query)(`INSERT INTO combo_deals (name, description, package_price, priority_order, included_items_json, image_url, is_time_limited, valid_from, valid_to, is_active)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, true)
        RETURNING *;`, [
-            name,
-            description,
-            package_price,
-            priority_order,
+            name || 'New Combo Deal',
+            description || '',
+            Number(package_price) || 0,
+            Number(priority_order) || 1,
             JSON.stringify(includedItems),
-            image_url,
-            is_time_limited,
-            valid_from,
-            valid_to,
+            image_url || '',
+            Boolean(is_time_limited),
+            valid_from || null,
+            valid_to || null,
         ]);
         const inserted = result.rows[0];
         res.status(201).json({
             success: true,
-            message: 'Combo deal created',
+            message: strings_js_1.STRINGS.COMBO_DEAL_CREATED,
             data: {
                 ...inserted,
                 package_price: Number(inserted.package_price),
@@ -682,7 +681,7 @@ router.put('/deals/:id', async (req, res, next) => {
         const id = parseInt(req.params.id, 10);
         const checkRes = await (0, db_js_1.query)(`SELECT * FROM combo_deals WHERE id = $1;`, [id]);
         if (checkRes.rows.length === 0) {
-            return res.status(404).json({ success: false, message: 'Deal not found' });
+            return res.status(404).json({ success: false, message: strings_js_1.STRINGS.COMBO_DEAL_NOT_FOUND });
         }
         const currentDeal = checkRes.rows[0];
         if (req.body.image_url && req.body.image_url !== currentDeal.image_url) {
@@ -700,7 +699,7 @@ router.put('/deals/:id', async (req, res, next) => {
         const updated = updateRes.rows[0];
         res.json({
             success: true,
-            message: 'Combo deal updated',
+            message: strings_js_1.STRINGS.COMBO_DEAL_UPDATED,
             data: {
                 ...updated,
                 package_price: Number(updated.package_price),
@@ -719,10 +718,10 @@ router.post('/deals/:id/toggle', async (req, res, next) => {
         const id = parseInt(req.params.id, 10);
         const result = await (0, db_js_1.query)(`UPDATE combo_deals SET is_active = NOT is_active WHERE id = $1 RETURNING *;`, [id]);
         if (result.rows.length === 0) {
-            return res.status(404).json({ success: false, message: 'Deal not found' });
+            return res.status(404).json({ success: false, message: strings_js_1.STRINGS.COMBO_DEAL_NOT_FOUND });
         }
         const deal = result.rows[0];
-        res.json({ success: true, message: `Deal ${deal.is_active ? 'enabled' : 'disabled'}`, data: deal });
+        res.json({ success: true, message: deal.is_active ? strings_js_1.STRINGS.COMBO_DEAL_ENABLED : strings_js_1.STRINGS.COMBO_DEAL_DISABLED, data: deal });
     }
     catch (error) {
         next(error);
@@ -733,11 +732,11 @@ router.delete('/deals/:id', async (req, res, next) => {
         const id = parseInt(req.params.id, 10);
         const checkRes = await (0, db_js_1.query)(`SELECT * FROM combo_deals WHERE id = $1;`, [id]);
         if (checkRes.rows.length === 0) {
-            return res.status(404).json({ success: false, message: 'Deal not found' });
+            return res.status(404).json({ success: false, message: strings_js_1.STRINGS.COMBO_DEAL_NOT_FOUND });
         }
         deleteOldUploadFile(checkRes.rows[0].image_url);
         await (0, db_js_1.query)(`DELETE FROM combo_deals WHERE id = $1;`, [id]);
-        res.json({ success: true, message: 'Combo deal deleted' });
+        res.json({ success: true, message: strings_js_1.STRINGS.COMBO_DEAL_DELETED });
     }
     catch (error) {
         next(error);
@@ -757,14 +756,11 @@ router.get('/employees', async (req, res, next) => {
 });
 router.post('/employees', async (req, res, next) => {
     try {
-        const full_name = req.body.full_name || 'New Staff Member';
-        const phone_number = req.body.phone_number || '';
-        const address = req.body.address || '';
-        const position = req.body.position || 'Chef';
+        const { full_name, phone_number, address, position } = req.body;
         const result = await (0, db_js_1.query)(`INSERT INTO employees (full_name, phone_number, address, position)
        VALUES ($1, $2, $3, $4)
-       RETURNING *;`, [full_name, phone_number, address, position]);
-        res.status(201).json({ success: true, message: 'Employee created', data: result.rows[0] });
+       RETURNING *;`, [full_name || 'New Staff Member', phone_number || '', address || '', position || 'Chef']);
+        res.status(201).json({ success: true, message: strings_js_1.STRINGS.EMPLOYEE_CREATED, data: result.rows[0] });
     }
     catch (error) {
         next(error);
@@ -782,9 +778,9 @@ router.put('/employees/:id', async (req, res, next) => {
        WHERE id = $5
        RETURNING *;`, [full_name, phone_number, address, position, id]);
         if (result.rows.length === 0) {
-            return res.status(404).json({ success: false, message: 'Employee not found' });
+            return res.status(404).json({ success: false, message: strings_js_1.STRINGS.EMPLOYEE_NOT_FOUND });
         }
-        res.json({ success: true, message: 'Employee updated', data: result.rows[0] });
+        res.json({ success: true, message: strings_js_1.STRINGS.EMPLOYEE_UPDATED, data: result.rows[0] });
     }
     catch (error) {
         next(error);
@@ -795,9 +791,9 @@ router.delete('/employees/:id', async (req, res, next) => {
         const id = parseInt(req.params.id, 10);
         const result = await (0, db_js_1.query)(`DELETE FROM employees WHERE id = $1 RETURNING *;`, [id]);
         if (result.rows.length === 0) {
-            return res.status(404).json({ success: false, message: 'Employee not found' });
+            return res.status(404).json({ success: false, message: strings_js_1.STRINGS.EMPLOYEE_NOT_FOUND });
         }
-        res.json({ success: true, message: 'Employee deleted' });
+        res.json({ success: true, message: strings_js_1.STRINGS.EMPLOYEE_DELETED });
     }
     catch (error) {
         next(error);
@@ -832,7 +828,7 @@ router.post('/customers', async (req, res, next) => {
         }
         res.status(201).json({
             success: true,
-            message: 'Customer record created',
+            message: strings_js_1.STRINGS.CUSTOMER_CREATED,
             data: {
                 id: user.id,
                 name: user.name,
@@ -858,13 +854,13 @@ router.put('/customers/:id', async (req, res, next) => {
        WHERE id = $4
        RETURNING *;`, [name, phone_number, is_blocked !== undefined ? Boolean(is_blocked) : null, id]);
         if (userRes.rows.length === 0) {
-            return res.status(404).json({ success: false, message: 'Customer not found' });
+            return res.status(404).json({ success: false, message: strings_js_1.STRINGS.CUSTOMER_NOT_FOUND });
         }
         if (detailed_address !== undefined) {
             await (0, db_js_1.query)(`INSERT INTO customer_addresses (customer_id, detailed_address, is_default)
          VALUES ($1, $2, true);`, [id, detailed_address]);
         }
-        res.json({ success: true, message: 'Customer record updated', data: userRes.rows[0] });
+        res.json({ success: true, message: strings_js_1.STRINGS.CUSTOMER_UPDATED, data: userRes.rows[0] });
     }
     catch (error) {
         next(error);
@@ -875,9 +871,9 @@ router.delete('/customers/:id', async (req, res, next) => {
         const id = parseInt(req.params.id, 10);
         const result = await (0, db_js_1.query)(`DELETE FROM customers WHERE id = $1 RETURNING *;`, [id]);
         if (result.rows.length === 0) {
-            return res.status(404).json({ success: false, message: 'Customer not found' });
+            return res.status(404).json({ success: false, message: strings_js_1.STRINGS.CUSTOMER_NOT_FOUND });
         }
-        res.json({ success: true, message: 'Customer record deleted' });
+        res.json({ success: true, message: strings_js_1.STRINGS.CUSTOMER_DELETED });
     }
     catch (error) {
         next(error);
@@ -888,10 +884,10 @@ router.post('/customers/:id/toggle-block', async (req, res, next) => {
         const id = parseInt(req.params.id, 10);
         const result = await (0, db_js_1.query)(`UPDATE customers SET is_blocked = NOT is_blocked WHERE id = $1 RETURNING *;`, [id]);
         if (result.rows.length === 0) {
-            return res.status(404).json({ success: false, message: 'Customer not found' });
+            return res.status(404).json({ success: false, message: strings_js_1.STRINGS.CUSTOMER_NOT_FOUND });
         }
         const cust = result.rows[0];
-        res.json({ success: true, message: `Customer ${cust.is_blocked ? 'blocked' : 'unblocked'}`, data: cust });
+        res.json({ success: true, message: cust.is_blocked ? strings_js_1.STRINGS.CUSTOMER_BLOCKED_MSG : strings_js_1.STRINGS.CUSTOMER_UNBLOCKED_MSG, data: cust });
     }
     catch (error) {
         next(error);
@@ -918,7 +914,7 @@ router.post('/restaurant/settings', async (req, res, next) => {
          ON CONFLICT (setting_key) DO UPDATE SET setting_value = EXCLUDED.setting_value;`, [key, String(value)]);
         }
         const updatedSettings = await (0, dbStore_js_1.getSystemSettingsFromDB)();
-        res.json({ success: true, message: 'Restaurant settings updated', data: updatedSettings });
+        res.json({ success: true, message: strings_js_1.STRINGS.SETTINGS_UPDATED, data: updatedSettings });
     }
     catch (error) {
         next(error);
@@ -932,12 +928,12 @@ router.get('/profile', (req, res) => {
 });
 router.post('/upload', uploadService_js_1.uploadMiddleware.single('image'), (req, res) => {
     if (!req.file) {
-        return res.status(400).json({ success: false, message: 'No file uploaded' });
+        return res.status(400).json({ success: false, message: strings_js_1.STRINGS.NO_FILE_UPLOADED });
     }
     const imageUrl = (0, uploadService_js_1.getImageUrl)(req.file.filename);
     res.json({
         success: true,
-        message: 'File uploaded successfully',
+        message: strings_js_1.STRINGS.FILE_UPLOADED_SUCCESS,
         filename: req.file.filename,
         imageUrl,
     });

@@ -1,6 +1,7 @@
 import pg from 'pg';
 import { env } from '../config/config.js';
 import { pool } from '../config/db.js';
+import { STRINGS } from '../constants/strings.js';
 
 const { Client } = pg;
 
@@ -22,14 +23,14 @@ async function ensureDatabaseExists() {
     );
 
     if (res.rowCount === 0) {
-      console.log(`⏳ Database "${env.DB_NAME}" does not exist. Creating...`);
+      console.log(`[DB] Database "${env.DB_NAME}" does not exist. Creating...`);
       await rootClient.query(`CREATE DATABASE "${env.DB_NAME}"`);
-      console.log(`✅ Database "${env.DB_NAME}" created successfully.`);
+      console.log(`[DB] Database "${env.DB_NAME}" created successfully.`);
     } else {
-      console.log(`✅ Database "${env.DB_NAME}" exists.`);
+      console.log(`[DB] Database "${env.DB_NAME}" exists.`);
     }
   } catch (error) {
-    console.log('ℹ️ Skipping root database creation check (Proceeding to migrate target database).');
+    console.log('[DB] Skipping root database creation check (Proceeding to migrate target database).');
   } finally {
     try {
       await rootClient.end();
@@ -40,7 +41,7 @@ async function ensureDatabaseExists() {
 async function runMigrations() {
   await ensureDatabaseExists();
 
-  console.log('⏳ Running PostgreSQL Schema Migrations & Alterations...');
+  console.log(STRINGS.MIGRATION_START);
 
   const migrationSQL = `
     -- 1. Migration Alterations for Backwards Compatibility
@@ -251,9 +252,9 @@ async function runMigrations() {
 
   try {
     await pool.query(migrationSQL);
-    console.log('✅ Success migration: All database tables & schema corrections applied successfully.');
+    console.log(`[DB] ${STRINGS.MIGRATION_SUCCESS}`);
   } catch (error) {
-    console.error('❌ Migration failed:', error);
+    console.error(`[DB ERROR] ${STRINGS.MIGRATION_FAILED}`, error);
   } finally {
     await pool.end();
   }

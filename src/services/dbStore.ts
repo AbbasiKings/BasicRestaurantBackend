@@ -1,15 +1,30 @@
 import { query } from '../config/db.js';
+import { VALUES } from '../constants/values.js';
+import { STRINGS } from '../constants/strings.js';
+import { DeviceStatus, PricingMode } from '../types/enums.js';
+import {
+  Category,
+  MenuItem,
+  ComboDeal,
+  Customer,
+  Order,
+  OrderItem,
+  Employee,
+  AuditLog,
+  AuthorizedDevice,
+  Sale,
+} from '../types/models.js';
 
 // ==========================================
 // 1. CATEGORIES MANAGEMENT
 // ==========================================
 export async function getAllCategoriesWithRelations() {
   const catRes = await query(`SELECT * FROM categories ORDER BY display_order ASC, id ASC;`);
-  const categories = catRes.rows;
+  const categories: Category[] = catRes.rows;
 
   if (categories.length === 0) return [];
 
-  const catIds = categories.map((c: any) => c.id);
+  const catIds = categories.map((c) => c.id);
 
   const sizesRes = await query(
     `SELECT * FROM category_sizes WHERE category_id = ANY($1::int[]) ORDER BY id ASC;`,
@@ -20,7 +35,7 @@ export async function getAllCategoriesWithRelations() {
     [catIds]
   );
 
-  return categories.map((c: any) => ({
+  return categories.map((c) => ({
     id: c.id,
     name: c.name,
     is_system_default: false,
@@ -40,7 +55,7 @@ export async function getAllCategoriesWithRelations() {
         id: a.id,
         enabled: true,
         add_on_name: a.add_on_name,
-        pricing_mode: a.pricing_mode || 'single',
+        pricing_mode: (a.pricing_mode as PricingMode) || PricingMode.SINGLE,
         price: 0,
         size_prices: typeof a.size_pricing === 'string' ? JSON.parse(a.size_pricing) : (a.size_pricing || []),
       })),
@@ -50,7 +65,7 @@ export async function getAllCategoriesWithRelations() {
 // ==========================================
 // 2. MENU ITEMS & COMBO DEALS
 // ==========================================
-export async function getAllMenuItems() {
+export async function getAllMenuItems(): Promise<MenuItem[]> {
   const res = await query(`SELECT * FROM menu_items ORDER BY id DESC;`);
   return res.rows.map((m: any) => ({
     id: m.id,
@@ -63,10 +78,13 @@ export async function getAllMenuItems() {
     sizes: [],
     addons: [],
     is_active: m.is_active,
+    is_time_limited: Boolean(m.is_time_limited),
+    valid_from: m.valid_from,
+    valid_to: m.valid_to,
   }));
 }
 
-export async function getAllComboDeals() {
+export async function getAllComboDeals(): Promise<ComboDeal[]> {
   const res = await query(`SELECT * FROM combo_deals ORDER BY priority_order ASC, id DESC;`);
   return res.rows.map((d: any) => ({
     id: d.id,
@@ -218,7 +236,7 @@ export async function createOrderInDatabase(orderData: any) {
   };
 }
 
-export async function getSalesDataFromDB() {
+export async function getSalesDataFromDB(): Promise<Sale[]> {
   const salesRes = await query(`SELECT * FROM sales ORDER BY id DESC;`);
   return salesRes.rows.map((s: any) => ({
     id: s.id,
@@ -239,7 +257,7 @@ export async function getSalesDataFromDB() {
 // ==========================================
 // 5. EMPLOYEES & SYSTEM SETTINGS
 // ==========================================
-export async function getAllEmployeesFromDB() {
+export async function getAllEmployeesFromDB(): Promise<Employee[]> {
   const res = await query(`SELECT * FROM employees ORDER BY id DESC;`);
   return res.rows;
 }
@@ -249,10 +267,10 @@ export async function getSystemSettingsFromDB() {
   const settings: Record<string, string> = {
     opening_time: '11:00 AM',
     closing_time: '02:00 AM',
-    max_cash_limit: '5000',
-    delivery_fee: '150',
+    max_cash_limit: String(VALUES.DEFAULT_MAX_CASH_LIMIT),
+    delivery_fee: String(VALUES.DEFAULT_DELIVERY_FEE),
     min_takeaway_orders: '1',
-    starting_cash: '10000',
+    starting_cash: String(VALUES.DEFAULT_STARTING_CASH),
     maintenance_mode: 'false',
   };
   res.rows.forEach((row: any) => {
@@ -279,12 +297,12 @@ export async function createAuditLog(log: {
     );
     return res.rows[0];
   } catch (error) {
-    console.error('❌ Failed to save audit log to DB:', error);
+    console.error(`[DB ERROR] ${STRINGS.SEED_FAILED}`, error);
   }
 }
 
-export async function getAuditLogsFromDB() {
-  const res = await query(`SELECT * FROM audit_logs ORDER BY id DESC LIMIT 100;`);
+export async function getAuditLogsFromDB(): Promise<AuditLog[]> {
+  const res = await query(`SELECT * FROM audit_logs ORDER BY id DESC LIMIT $1;`, [VALUES.AUDIT_LOG_LIMIT]);
   return res.rows.map((row: any) => ({
     id: row.id,
     actor_name: row.actor_name,
@@ -295,14 +313,14 @@ export async function getAuditLogsFromDB() {
   }));
 }
 
-export async function getAuthorizedDevicesFromDB() {
+export async function getAuthorizedDevicesFromDB(): Promise<AuthorizedDevice[]> {
   const res = await query(`SELECT * FROM authorized_devices ORDER BY id DESC;`);
   return res.rows.map((d: any) => ({
-    id: String(d.id),
+    id: d.id,
     device_id: d.device_id,
     device_name: d.device_name,
     ip_address: d.ip_address || '',
-    status: d.status,
+    status: d.status as DeviceStatus,
     first_seen: d.first_seen ? new Date(d.first_seen).toLocaleString() : new Date().toLocaleString(),
     last_seen: d.last_seen ? new Date(d.last_seen).toLocaleString() : new Date().toLocaleString(),
     approved_at: d.approved_at ? new Date(d.approved_at).toLocaleString() : undefined,
@@ -315,7 +333,7 @@ export async function upsertAuthorizedDeviceInDB(dev: {
   ip_address: string;
   status: string;
 }) {
-  const isApproved = dev.status === 'approved';
+  const isApproved = dev.status === DeviceStatus.APPROVED;
   const res = await query(
     `INSERT INTO authorized_devices (device_id, device_name, ip_address, status, approved_at)
      VALUES ($1, $2, $3, $4, $5)
@@ -330,7 +348,7 @@ export async function upsertAuthorizedDeviceInDB(dev: {
 }
 
 export async function updateDeviceStatusInDB(deviceId: string, status: string) {
-  const isApproved = status === 'approved';
+  const isApproved = status === DeviceStatus.APPROVED;
   const res = await query(
     `UPDATE authorized_devices
      SET status = $1, approved_at = CASE WHEN $2::boolean THEN CURRENT_TIMESTAMP ELSE approved_at END

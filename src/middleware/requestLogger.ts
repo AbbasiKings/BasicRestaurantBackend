@@ -1,4 +1,5 @@
 import { Request, Response, NextFunction } from 'express';
+import { STRINGS } from '../constants/strings.js';
 
 export const requestLogger = (req: Request, res: Response, next: NextFunction) => {
   const startTime = Date.now();
@@ -6,15 +7,12 @@ export const requestLogger = (req: Request, res: Response, next: NextFunction) =
   const method = req.method;
   const url = req.originalUrl || req.url;
 
-  // Log incoming request
-  console.log(`📩 [REQ ${timestamp}] ${method} ${url} - Client: ${req.ip || 'unknown'}`);
+  console.log(`${STRINGS.REQUEST_LOG} [${timestamp}] ${method} ${url} - Client: ${req.ip || 'unknown'}`);
 
-  // Capture response completion to log status code and execution duration
   res.on('finish', () => {
     const duration = Date.now() - startTime;
     const status = res.statusCode;
-    const statusIcon = status >= 400 ? '❌' : status >= 300 ? '⚠️' : '✅';
-    console.log(`📤 [RES ${new Date().toISOString()}] ${statusIcon} ${method} ${url} - Status: ${status} - Duration: ${duration}ms`);
+    console.log(`${STRINGS.RESPONSE_LOG} [${new Date().toISOString()}] ${method} ${url} - Status: ${status} - Duration: ${duration}ms`);
   });
 
   next();

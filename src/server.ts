@@ -9,6 +9,8 @@ import { errorHandler } from './middleware/errorHandler.js';
 import { requestLogger } from './middleware/requestLogger.js';
 import { uploadMiddleware, getImageUrl } from './services/uploadService.js';
 import { initSocketServer } from './services/socketService.js';
+import { STRINGS } from './constants/strings.js';
+import { VALUES } from './constants/values.js';
 import adminRoutes from './modules/admin/adminRoutes.js';
 import customerRoutes from './modules/customer/customerRoutes.js';
 
@@ -43,27 +45,13 @@ app.get('/health', (req: Request, res: Response) => {
 // Standalone Image Upload API Endpoint
 app.post('/api/upload', uploadMiddleware.single('image'), (req: Request, res: Response) => {
   if (!req.file) {
-    return res.status(400).json({ success: false, message: 'No image file provided' });
+    return res.status(400).json({ success: false, message: STRINGS.NO_FILE_UPLOADED });
   }
 
   const imageUrl = getImageUrl(req.file.filename);
   res.json({
     success: true,
-    message: 'Image uploaded successfully',
-    filename: req.file.filename,
-    imageUrl,
-  });
-});
-
-app.post('/upload', uploadMiddleware.single('image'), (req: Request, res: Response) => {
-  if (!req.file) {
-    return res.status(400).json({ success: false, message: 'No image file provided' });
-  }
-
-  const imageUrl = getImageUrl(req.file.filename);
-  res.json({
-    success: true,
-    message: 'Image uploaded successfully',
+    message: STRINGS.FILE_UPLOADED_SUCCESS,
     filename: req.file.filename,
     imageUrl,
   });
@@ -76,15 +64,15 @@ app.use('/api/customer', customerRoutes);
 // Global Error Handler
 app.use(errorHandler);
 
-const PORT = parseInt(env.PORT, 10) || 5000;
+const PORT = parseInt(env.PORT, 10) || VALUES.DEFAULT_PORT;
 
 server.listen(PORT, '0.0.0.0', async () => {
-  console.log(`🚀 Backend live: Restaurant System Backend API is active and listening on port ${PORT} (0.0.0.0)`);
-  console.log(`🔌 Socket.io server initialized and listening for events`);
-  console.log(`📁 Public media uploads route: ${env.BASE_URL}/uploads`);
-  console.log(`📷 Standalone upload endpoint: ${env.BASE_URL}/api/upload`);
-  console.log(`💻 Admin API base route: ${env.BASE_URL}/api/admin`);
-  console.log(`📱 Customer API base route: ${env.BASE_URL}/api/customer`);
+  console.log(`[SERVER] ${STRINGS.SERVER_START} ${PORT}`);
+  console.log(`[SOCKET] ${STRINGS.SOCKET_INITIALIZED}`);
+  console.log(`[ROUTE] ${STRINGS.UPLOADS_ROUTE} ${env.BASE_URL}/uploads`);
+  console.log(`[ROUTE] ${STRINGS.STANDALONE_UPLOAD_ENDPOINT} ${env.BASE_URL}/api/upload`);
+  console.log(`[ROUTE] ${STRINGS.ADMIN_API_BASE_ROUTE} ${env.BASE_URL}/api/admin`);
+  console.log(`[ROUTE] ${STRINGS.CUSTOMER_API_BASE_ROUTE} ${env.BASE_URL}/api/customer`);
 
   // Verify Database Connection on startup
   await checkDatabaseConnection();

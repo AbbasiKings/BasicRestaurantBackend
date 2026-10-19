@@ -2,6 +2,10 @@ import { Router, Request, Response } from 'express';
 import jwt from 'jsonwebtoken';
 import { env } from '../../config/config.js';
 import { query } from '../../config/db.js';
+import { STRINGS } from '../../constants/strings.js';
+import { VALUES } from '../../constants/values.js';
+import { OrderSource, OrderType } from '../../types/enums.js';
+import { CustomerAuthDTO, CustomerProfileDTO, CreateOrderDTO } from '../../types/dtos.js';
 import { customerAuthGuard, CustomerRequest } from '../../middleware/customerAuthGuard.js';
 import {
   getAllCategoriesWithRelations,
@@ -19,25 +23,25 @@ const router = Router();
 // 1. AUTHENTICATION MODULE
 // ==========================================
 router.post('/auth/send-otp', (req: Request, res: Response) => {
-  const { phone } = req.body;
-  if (!phone) return res.status(400).json({ success: false, message: 'Phone number required' });
+  const { phone }: CustomerAuthDTO = req.body;
+  if (!phone) return res.status(400).json({ success: false, message: STRINGS.PHONE_REQUIRED });
 
   res.json({
     success: true,
-    message: `Dummy OTP code 123456 sent successfully to ${phone}`,
-    dummyOtp: '123456',
+    message: `Dummy OTP code ${VALUES.DUMMY_OTP} sent successfully to ${phone}`,
+    dummyOtp: VALUES.DUMMY_OTP,
   });
 });
 
 router.post('/auth/verify-otp', async (req: Request, res: Response, next) => {
   try {
-    const { phone, otp } = req.body;
-    if (!phone) return res.status(400).json({ success: false, message: 'Phone number required' });
+    const { phone, otp }: CustomerAuthDTO = req.body;
+    if (!phone) return res.status(400).json({ success: false, message: STRINGS.PHONE_REQUIRED });
 
-    if (String(otp).trim() !== '123456') {
+    if (String(otp).trim() !== VALUES.DUMMY_OTP) {
       return res.status(400).json({
         success: false,
-        message: 'Invalid OTP code. Please enter 123456.',
+        message: STRINGS.INVALID_OTP,
       });
     }
 
@@ -60,12 +64,12 @@ router.post('/auth/verify-otp', async (req: Request, res: Response, next) => {
           phone: existingUser.phone_number,
           name: existingUser.name,
         };
-        const token = jwt.sign(userPayload, env.CUSTOMER_JWT_SECRET, { expiresIn: '7d' });
+        const token = jwt.sign(userPayload, env.CUSTOMER_JWT_SECRET, { expiresIn: VALUES.JWT_DEFAULT_EXPIRES });
 
         return res.json({
           success: true,
           accountStatus: 'Signed In',
-          message: 'Signed in successfully',
+          message: STRINGS.SIGNED_IN_SUCCESS,
           token,
           user: userPayload,
         });
@@ -88,7 +92,7 @@ router.post('/auth/verify-otp', async (req: Request, res: Response, next) => {
       phone: phoneStr,
       name: targetUser.name || '',
     };
-    const token = jwt.sign(newPayload, env.CUSTOMER_JWT_SECRET, { expiresIn: '7d' });
+    const token = jwt.sign(newPayload, env.CUSTOMER_JWT_SECRET, { expiresIn: VALUES.JWT_DEFAULT_EXPIRES });
 
     return res.json({
       success: true,
@@ -104,11 +108,11 @@ router.post('/auth/verify-otp', async (req: Request, res: Response, next) => {
 
 router.post('/auth/user-info', async (req: Request, res: Response, next) => {
   try {
-    const { phone, name, address, profilePicture } = req.body;
+    const { phone, name, address, profilePicture }: CustomerProfileDTO = req.body;
     if (!phone || !name || !address) {
       return res.status(400).json({
         success: false,
-        message: 'Phone number, name, and address are required.',
+        message: STRINGS.PHONE_NAME_ADDRESS_REQUIRED,
       });
     }
 
@@ -130,7 +134,7 @@ router.post('/auth/user-info', async (req: Request, res: Response, next) => {
 
     res.json({
       success: true,
-      message: 'Profile information saved successfully.',
+      message: STRINGS.PROFILE_SAVED_SUCCESS,
       user: {
         phone: phoneStr,
         name: String(name).trim(),
@@ -146,13 +150,13 @@ router.post('/auth/user-info', async (req: Request, res: Response, next) => {
 router.post('/auth/send-phone-change-otp', (req: Request, res: Response) => {
   const { currentPhone, newPhone } = req.body;
   if (!currentPhone || !newPhone) {
-    return res.status(400).json({ success: false, message: 'Current phone and new phone are required.' });
+    return res.status(400).json({ success: false, message: STRINGS.PHONE_AND_OTP_REQUIRED });
   }
 
   res.json({
     success: true,
-    message: `Dummy OTP code 123456 sent successfully to ${newPhone}`,
-    dummyOtp: '123456',
+    message: `Dummy OTP code ${VALUES.DUMMY_OTP} sent successfully to ${newPhone}`,
+    dummyOtp: VALUES.DUMMY_OTP,
   });
 });
 
@@ -160,11 +164,11 @@ router.post('/auth/verify-phone-change-otp', async (req: Request, res: Response,
   try {
     const { currentPhone, newPhone, otp } = req.body;
     if (!currentPhone || !newPhone || !otp) {
-      return res.status(400).json({ success: false, message: 'Current phone, new phone, and OTP code are required.' });
+      return res.status(400).json({ success: false, message: STRINGS.PHONE_AND_OTP_REQUIRED });
     }
 
-    if (String(otp).trim() !== '123456') {
-      return res.status(400).json({ success: false, message: 'Invalid OTP code. Please enter 123456.' });
+    if (String(otp).trim() !== VALUES.DUMMY_OTP) {
+      return res.status(400).json({ success: false, message: STRINGS.INVALID_OTP });
     }
 
     const currPhoneStr = String(currentPhone).trim();
@@ -182,11 +186,11 @@ router.post('/auth/verify-phone-change-otp', async (req: Request, res: Response,
       name: updatedUser ? updatedUser.name : '',
     };
 
-    const token = jwt.sign(updatedPayload, env.CUSTOMER_JWT_SECRET, { expiresIn: '7d' });
+    const token = jwt.sign(updatedPayload, env.CUSTOMER_JWT_SECRET, { expiresIn: VALUES.JWT_DEFAULT_EXPIRES });
 
     res.json({
       success: true,
-      message: 'Phone number updated successfully.',
+      message: STRINGS.PHONE_UPDATED_SUCCESS,
       token,
       newPhone: newPhoneStr,
       user: updatedPayload,
@@ -215,7 +219,7 @@ router.get('/home/items/:id', async (req: Request, res: Response, next) => {
     const id = parseInt(req.params.id, 10);
     const items = await getAllMenuItems();
     const item = items.find((i) => i.id === id);
-    if (!item) return res.status(404).json({ success: false, message: 'Item not found' });
+    if (!item) return res.status(404).json({ success: false, message: STRINGS.MENU_ITEM_NOT_FOUND });
     res.json({ success: true, data: item });
   } catch (error) {
     next(error);
@@ -227,7 +231,7 @@ router.get('/home/deals/:id', async (req: Request, res: Response, next) => {
     const id = parseInt(req.params.id, 10);
     const deals = await getAllComboDeals();
     const deal = deals.find((d) => d.id === id);
-    if (!deal) return res.status(404).json({ success: false, message: 'Deal not found' });
+    if (!deal) return res.status(404).json({ success: false, message: STRINGS.COMBO_DEAL_NOT_FOUND });
     res.json({ success: true, data: deal });
   } catch (error) {
     next(error);
@@ -242,8 +246,8 @@ router.get('/app/settings', async (req: Request, res: Response, next) => {
       settings: {
         openingTime: settings.opening_time || '11:00 AM',
         closingTime: settings.closing_time || '02:00 AM',
-        maxCashOrderLimit: Number(settings.max_cash_limit) || 5000,
-        deliveryFee: Number(settings.delivery_fee) || 150,
+        maxCashOrderLimit: Number(settings.max_cash_limit) || VALUES.DEFAULT_MAX_CASH_LIMIT,
+        deliveryFee: Number(settings.delivery_fee) || VALUES.DEFAULT_DELIVERY_FEE,
       },
     });
   } catch (error) {
@@ -264,7 +268,7 @@ router.post('/cart/quote', async (req: Request, res: Response, next) => {
       0
     );
 
-    const deliveryFeePaisa = (Number(settings.delivery_fee) || 150) * 100;
+    const deliveryFeePaisa = (Number(settings.delivery_fee) || VALUES.DEFAULT_DELIVERY_FEE) * 100;
     const totalPaisa = subtotalPaisa + deliveryFeePaisa;
 
     res.json({
@@ -285,13 +289,13 @@ router.post('/cart/quote', async (req: Request, res: Response, next) => {
 // ==========================================
 router.post('/orders', async (req: Request, res: Response, next) => {
   try {
-    const { customerName, customerPhone, deliveryAddress, items, totalAmount } = req.body;
+    const { customerName, customerPhone, deliveryAddress, items, totalAmount }: CreateOrderDTO = req.body;
     const settings = await getSystemSettingsFromDB();
-    const deliveryFee = Number(settings.delivery_fee) || 150;
+    const deliveryFee = Number(settings.delivery_fee) || VALUES.DEFAULT_DELIVERY_FEE;
 
     const newOrder = await createOrderInDatabase({
-      order_source: 'App',
-      order_type: 'Delivery',
+      order_source: OrderSource.APP,
+      order_type: OrderType.DELIVERY,
       customer_id: null,
       customer_name: customerName || 'Customer',
       customer_phone: customerPhone || '',
@@ -306,7 +310,7 @@ router.post('/orders', async (req: Request, res: Response, next) => {
 
     res.status(201).json({
       success: true,
-      message: 'Order placed successfully',
+      message: STRINGS.ORDER_PLACED_SUCCESS,
       order: newOrder,
     });
   } catch (error) {
@@ -317,7 +321,7 @@ router.post('/orders', async (req: Request, res: Response, next) => {
 router.get('/orders/history', async (req: Request, res: Response, next) => {
   try {
     const allOrders = await getAllOrdersWithItems();
-    const appOrders = allOrders.filter((o) => o.order_source === 'App');
+    const appOrders = allOrders.filter((o) => o.order_source === OrderSource.APP);
     res.json({ success: true, data: appOrders });
   } catch (error) {
     next(error);

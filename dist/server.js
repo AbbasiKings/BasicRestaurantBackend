@@ -14,6 +14,8 @@ const errorHandler_js_1 = require("./middleware/errorHandler.js");
 const requestLogger_js_1 = require("./middleware/requestLogger.js");
 const uploadService_js_1 = require("./services/uploadService.js");
 const socketService_js_1 = require("./services/socketService.js");
+const strings_js_1 = require("./constants/strings.js");
+const values_js_1 = require("./constants/values.js");
 const adminRoutes_js_1 = __importDefault(require("./modules/admin/adminRoutes.js"));
 const customerRoutes_js_1 = __importDefault(require("./modules/customer/customerRoutes.js"));
 const app = (0, express_1.default)();
@@ -41,24 +43,12 @@ app.get('/health', (req, res) => {
 // Standalone Image Upload API Endpoint
 app.post('/api/upload', uploadService_js_1.uploadMiddleware.single('image'), (req, res) => {
     if (!req.file) {
-        return res.status(400).json({ success: false, message: 'No image file provided' });
+        return res.status(400).json({ success: false, message: strings_js_1.STRINGS.NO_FILE_UPLOADED });
     }
     const imageUrl = (0, uploadService_js_1.getImageUrl)(req.file.filename);
     res.json({
         success: true,
-        message: 'Image uploaded successfully',
-        filename: req.file.filename,
-        imageUrl,
-    });
-});
-app.post('/upload', uploadService_js_1.uploadMiddleware.single('image'), (req, res) => {
-    if (!req.file) {
-        return res.status(400).json({ success: false, message: 'No image file provided' });
-    }
-    const imageUrl = (0, uploadService_js_1.getImageUrl)(req.file.filename);
-    res.json({
-        success: true,
-        message: 'Image uploaded successfully',
+        message: strings_js_1.STRINGS.FILE_UPLOADED_SUCCESS,
         filename: req.file.filename,
         imageUrl,
     });
@@ -68,14 +58,14 @@ app.use('/api/admin', adminRoutes_js_1.default);
 app.use('/api/customer', customerRoutes_js_1.default);
 // Global Error Handler
 app.use(errorHandler_js_1.errorHandler);
-const PORT = parseInt(config_js_1.env.PORT, 10) || 5000;
+const PORT = parseInt(config_js_1.env.PORT, 10) || values_js_1.VALUES.DEFAULT_PORT;
 server.listen(PORT, '0.0.0.0', async () => {
-    console.log(`🚀 Backend live: Restaurant System Backend API is active and listening on port ${PORT} (0.0.0.0)`);
-    console.log(`🔌 Socket.io server initialized and listening for events`);
-    console.log(`📁 Public media uploads route: ${config_js_1.env.BASE_URL}/uploads`);
-    console.log(`📷 Standalone upload endpoint: ${config_js_1.env.BASE_URL}/api/upload`);
-    console.log(`💻 Admin API base route: ${config_js_1.env.BASE_URL}/api/admin`);
-    console.log(`📱 Customer API base route: ${config_js_1.env.BASE_URL}/api/customer`);
+    console.log(`[SERVER] ${strings_js_1.STRINGS.SERVER_START} ${PORT}`);
+    console.log(`[SOCKET] ${strings_js_1.STRINGS.SOCKET_INITIALIZED}`);
+    console.log(`[ROUTE] ${strings_js_1.STRINGS.UPLOADS_ROUTE} ${config_js_1.env.BASE_URL}/uploads`);
+    console.log(`[ROUTE] ${strings_js_1.STRINGS.STANDALONE_UPLOAD_ENDPOINT} ${config_js_1.env.BASE_URL}/api/upload`);
+    console.log(`[ROUTE] ${strings_js_1.STRINGS.ADMIN_API_BASE_ROUTE} ${config_js_1.env.BASE_URL}/api/admin`);
+    console.log(`[ROUTE] ${strings_js_1.STRINGS.CUSTOMER_API_BASE_ROUTE} ${config_js_1.env.BASE_URL}/api/customer`);
     // Verify Database Connection on startup
     await (0, db_js_1.checkDatabaseConnection)();
 });
