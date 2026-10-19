@@ -43,9 +43,7 @@ async function runMigrations() {
     await ensureDatabaseExists();
     console.log(strings_js_1.STRINGS.MIGRATION_START);
     const migrationSQL = `
-    -- 1. Migration Alterations for Backwards Compatibility
-
-    -- Rename users table to customers if users exists
+    -- 1. Pre-Migration Rename for Backwards Compatibility
     DO $$
     BEGIN
       IF EXISTS (SELECT FROM pg_tables WHERE schemaname = 'public' AND tablename = 'users') THEN
@@ -53,10 +51,6 @@ async function runMigrations() {
       END IF;
     END $$;
 
-    -- Drop email from customers table if exists
-    ALTER TABLE customers DROP COLUMN IF EXISTS email;
-
-    -- Rename customer_addresses user_id to customer_id if exists
     DO $$
     BEGIN
       IF EXISTS (SELECT FROM information_schema.columns WHERE table_name = 'customer_addresses' AND column_name = 'user_id') THEN
@@ -64,33 +58,7 @@ async function runMigrations() {
       END IF;
     END $$;
 
-    -- Drop address_title from customer_addresses if exists
-    ALTER TABLE customer_addresses DROP COLUMN IF EXISTS address_title;
-
-    -- Drop status from orders if exists
-    ALTER TABLE orders DROP COLUMN IF EXISTS status;
-
-    -- Drop special_instructions from order_items if exists
-    ALTER TABLE order_items DROP COLUMN IF EXISTS special_instructions;
-
-    -- Drop inventory_items table completely
-    DROP TABLE IF EXISTS inventory_items CASCADE;
-
-    -- Drop last_login_ip from admins if exists
-    ALTER TABLE admins DROP COLUMN IF EXISTS last_login_ip;
-
-    -- Add pricing_mode to category_add_ons if not exists
-    ALTER TABLE category_add_ons ADD COLUMN IF NOT EXISTS pricing_mode VARCHAR(50) NOT NULL DEFAULT 'single';
-
-    -- Set default status to approved for authorized_devices if exists
-    DO $$
-    BEGIN
-      IF EXISTS (SELECT FROM pg_tables WHERE schemaname = 'public' AND tablename = 'authorized_devices') THEN
-        ALTER TABLE authorized_devices ALTER COLUMN status SET DEFAULT 'approved';
-      END IF;
-    END $$;
-
-    -- 2. Schema Table Definitions
+    -- 2. Core Schema Table Definitions (Guarantees all tables exist)
 
     -- Admins Table
     CREATE TABLE IF NOT EXISTS admins (
@@ -255,6 +223,17 @@ async function runMigrations() {
       sale_date DATE NOT NULL DEFAULT CURRENT_DATE,
       created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
     );
+
+    -- 3. Post-Creation Alterations for Backwards Compatibility
+
+    ALTER TABLE customers DROP COLUMN IF EXISTS email;
+    ALTER TABLE customer_addresses DROP COLUMN IF EXISTS address_title;
+    ALTER TABLE orders DROP COLUMN IF EXISTS status;
+    ALTER TABLE order_items DROP COLUMN IF EXISTS special_instructions;
+    DROP TABLE IF EXISTS inventory_items CASCADE;
+    ALTER TABLE admins DROP COLUMN IF EXISTS last_login_ip;
+    ALTER TABLE category_add_ons ADD COLUMN IF NOT EXISTS pricing_mode VARCHAR(50) NOT NULL DEFAULT 'single';
+    ALTER TABLE authorized_devices ALTER COLUMN status SET DEFAULT 'approved';
   `;
     try {
         await db_js_1.pool.query(migrationSQL);
@@ -262,6 +241,7 @@ async function runMigrations() {
     }
     catch (error) {
         console.error(`[DB ERROR] ${strings_js_1.STRINGS.MIGRATION_FAILED}`, error);
+        process.exit(1);
     }
     finally {
         await db_js_1.pool.end();
