@@ -35,7 +35,7 @@ router.post('/auth/verify-otp', async (req, res, next) => {
             });
         }
         const phoneStr = String(phone).trim();
-        const userRes = await (0, db_js_1.query)(`SELECT * FROM users WHERE phone_number = $1;`, [phoneStr]);
+        const userRes = await (0, db_js_1.query)(`SELECT * FROM customers WHERE phone_number = $1;`, [phoneStr]);
         if (userRes.rows.length > 0) {
             const existingUser = userRes.rows[0];
             if (existingUser.is_blocked) {
@@ -63,7 +63,7 @@ router.post('/auth/verify-otp', async (req, res, next) => {
         }
         let targetUser = userRes.rows[0];
         if (!targetUser) {
-            const newUserRes = await (0, db_js_1.query)(`INSERT INTO users (phone_number, name, is_verified, is_blocked)
+            const newUserRes = await (0, db_js_1.query)(`INSERT INTO customers (phone_number, name, is_verified, is_blocked)
          VALUES ($1, '', true, false)
          RETURNING *;`, [phoneStr]);
             targetUser = newUserRes.rows[0];
@@ -96,13 +96,13 @@ router.post('/auth/user-info', async (req, res, next) => {
             });
         }
         const phoneStr = String(phone).trim();
-        const userRes = await (0, db_js_1.query)(`INSERT INTO users (phone_number, name, is_verified, is_blocked)
+        const userRes = await (0, db_js_1.query)(`INSERT INTO customers (phone_number, name, is_verified, is_blocked)
        VALUES ($1, $2, true, false)
        ON CONFLICT (phone_number) DO UPDATE SET name = EXCLUDED.name
        RETURNING *;`, [phoneStr, String(name).trim()]);
         const user = userRes.rows[0];
-        await (0, db_js_1.query)(`INSERT INTO customer_addresses (user_id, address_title, detailed_address, is_default)
-       VALUES ($1, 'Home', $2, true);`, [user.id, String(address).trim()]);
+        await (0, db_js_1.query)(`INSERT INTO customer_addresses (customer_id, detailed_address, is_default)
+       VALUES ($1, $2, true);`, [user.id, String(address).trim()]);
         res.json({
             success: true,
             message: 'Profile information saved successfully.',
@@ -140,7 +140,7 @@ router.post('/auth/verify-phone-change-otp', async (req, res, next) => {
         }
         const currPhoneStr = String(currentPhone).trim();
         const newPhoneStr = String(newPhone).trim();
-        const userRes = await (0, db_js_1.query)(`UPDATE users SET phone_number = $1 WHERE phone_number = $2 RETURNING *;`, [newPhoneStr, currPhoneStr]);
+        const userRes = await (0, db_js_1.query)(`UPDATE customers SET phone_number = $1 WHERE phone_number = $2 RETURNING *;`, [newPhoneStr, currPhoneStr]);
         const updatedUser = userRes.rows[0];
         const updatedPayload = {
             id: updatedUser ? updatedUser.id : Date.now(),
@@ -284,10 +284,10 @@ router.get('/orders/history', async (req, res, next) => {
 router.get('/profile', async (req, res, next) => {
     try {
         const phone = req.query.phone;
-        const userRes = await (0, db_js_1.query)(`SELECT u.*, ca.detailed_address
-       FROM users u
-       LEFT JOIN customer_addresses ca ON (ca.user_id = u.id AND ca.is_default = true)
-       WHERE u.phone_number = $1;`, [phone]);
+        const userRes = await (0, db_js_1.query)(`SELECT c.*, ca.detailed_address
+       FROM customers c
+       LEFT JOIN customer_addresses ca ON (ca.customer_id = c.id AND ca.is_default = true)
+       WHERE c.phone_number = $1;`, [phone]);
         const cust = userRes.rows[0];
         res.json({
             success: true,
@@ -309,14 +309,14 @@ router.put('/profile', async (req, res, next) => {
         const { phone, name, address } = req.body;
         if (phone) {
             if (name) {
-                await (0, db_js_1.query)(`UPDATE users SET name = $1 WHERE phone_number = $2;`, [name, phone]);
+                await (0, db_js_1.query)(`UPDATE customers SET name = $1 WHERE phone_number = $2;`, [name, phone]);
             }
             if (address) {
-                const userRes = await (0, db_js_1.query)(`SELECT id FROM users WHERE phone_number = $1;`, [phone]);
+                const userRes = await (0, db_js_1.query)(`SELECT id FROM customers WHERE phone_number = $1;`, [phone]);
                 if (userRes.rows.length > 0) {
-                    const userId = userRes.rows[0].id;
-                    await (0, db_js_1.query)(`INSERT INTO customer_addresses (user_id, address_title, detailed_address, is_default)
-             VALUES ($1, 'Home', $2, true);`, [userId, address]);
+                    const customerId = userRes.rows[0].id;
+                    await (0, db_js_1.query)(`INSERT INTO customer_addresses (customer_id, detailed_address, is_default)
+             VALUES ($1, $2, true);`, [customerId, address]);
                 }
             }
         }

@@ -13,7 +13,7 @@ async function ensureDatabaseExists() {
         port: parseInt(config_js_1.env.DB_PORT, 10),
         user: config_js_1.env.DB_USER,
         password: config_js_1.env.DB_PASSWORD,
-        database: 'postgres', // Connect to default postgres DB first
+        database: 'postgres',
         ssl: config_js_1.env.DB_SSL === 'true' ? { rejectUnauthorized: false } : false,
     });
     try {
@@ -29,49 +29,89 @@ async function ensureDatabaseExists() {
         }
     }
     catch (error) {
-        // On managed databases (e.g. Aiven), connecting to 'postgres' root database may be restricted or optional
         console.log('ℹ️ Skipping root database creation check (Proceeding to migrate target database).');
     }
     finally {
-        await rootClient.end();
+        try {
+            await rootClient.end();
+        }
+        catch (_) { }
     }
 }
 async function runMigrations() {
     await ensureDatabaseExists();
-    console.log('⏳ Running PostgreSQL Schema Migrations...');
+    console.log('⏳ Running PostgreSQL Schema Migrations & Alterations...');
     const migrationSQL = `
-    -- 1. Admins Table
+    -- 1. Migration Alterations for Backwards Compatibility
+
+    -- Rename users table to customers if users exists
+    DO $$
+    BEGIN
+      IF EXISTS (SELECT FROM pg_tables WHERE schemaname = 'public' AND tablename = 'users') THEN
+        ALTER TABLE users RENAME TO customers;
+      END IF;
+    END $$;
+
+    -- Drop email from customers table if exists
+    ALTER TABLE customers DROP COLUMN IF EXISTS email;
+
+    -- Rename customer_addresses user_id to customer_id if exists
+    DO $$
+    BEGIN
+      IF EXISTS (SELECT FROM information_schema.columns WHERE table_name = 'customer_addresses' AND column_name = 'user_id') THEN
+        ALTER TABLE customer_addresses RENAME COLUMN user_id TO customer_id;
+      END IF;
+    END $$;
+
+    -- Drop address_title from customer_addresses if exists
+    ALTER TABLE customer_addresses DROP COLUMN IF EXISTS address_title;
+
+    -- Drop status from orders if exists
+    ALTER TABLE orders DROP COLUMN IF EXISTS status;
+
+    -- Drop special_instructions from order_items if exists
+    ALTER TABLE order_items DROP COLUMN IF EXISTS special_instructions;
+
+    -- Drop inventory_items table completely
+    DROP TABLE IF EXISTS inventory_items CASCADE;
+
+    -- Drop last_login_ip from admins if exists
+    ALTER TABLE admins DROP COLUMN IF EXISTS last_login_ip;
+
+    -- Add pricing_mode to category_add_ons if not exists
+    ALTER TABLE category_add_ons ADD COLUMN IF NOT EXISTS pricing_mode VARCHAR(50) NOT NULL DEFAULT 'single';
+
+    -- 2. Schema Table Definitions
+
+    -- Admins Table
     CREATE TABLE IF NOT EXISTS admins (
       id SERIAL PRIMARY KEY,
       name VARCHAR(255) NOT NULL,
       email VARCHAR(255) UNIQUE NOT NULL,
       password_hash VARCHAR(255) NOT NULL,
       role VARCHAR(100) NOT NULL DEFAULT 'Owner',
-      last_login_ip VARCHAR(100),
       created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
     );
 
-    -- 2. Users Table
-    CREATE TABLE IF NOT EXISTS users (
+    -- Customers Table
+    CREATE TABLE IF NOT EXISTS customers (
       id SERIAL PRIMARY KEY,
       phone_number VARCHAR(100) UNIQUE NOT NULL,
       name VARCHAR(255),
-      email VARCHAR(255),
       is_verified BOOLEAN DEFAULT TRUE,
       is_blocked BOOLEAN DEFAULT FALSE,
       created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
     );
 
-    -- 3. Customer Addresses Table
+    -- Customer Addresses Table
     CREATE TABLE IF NOT EXISTS customer_addresses (
       id SERIAL PRIMARY KEY,
-      user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
-      address_title VARCHAR(100) DEFAULT 'Home',
+      customer_id INTEGER REFERENCES customers(id) ON DELETE CASCADE,
       detailed_address TEXT NOT NULL,
       is_default BOOLEAN DEFAULT FALSE
     );
 
-    -- 4. Categories Table
+    -- Categories Table
     CREATE TABLE IF NOT EXISTS categories (
       id SERIAL PRIMARY KEY,
       name VARCHAR(255) NOT NULL,
@@ -79,7 +119,7 @@ async function runMigrations() {
       is_active BOOLEAN DEFAULT TRUE
     );
 
-    -- 5. Category Sizes Table
+    -- Category Sizes Table
     CREATE TABLE IF NOT EXISTS category_sizes (
       id SERIAL PRIMARY KEY,
       category_id INTEGER REFERENCES categories(id) ON DELETE CASCADE,
@@ -87,15 +127,16 @@ async function runMigrations() {
       base_price DECIMAL(10, 2) NOT NULL
     );
 
-    -- 6. Category Add-ons Table
+    -- Category Add-ons Table
     CREATE TABLE IF NOT EXISTS category_add_ons (
       id SERIAL PRIMARY KEY,
       category_id INTEGER REFERENCES categories(id) ON DELETE CASCADE,
       add_on_name VARCHAR(255) NOT NULL,
+      pricing_mode VARCHAR(50) NOT NULL DEFAULT 'single',
       size_pricing JSONB NOT NULL
     );
 
-    -- 7. Menu Items Table
+    -- Menu Items Table
     CREATE TABLE IF NOT EXISTS menu_items (
       id SERIAL PRIMARY KEY,
       category_id INTEGER REFERENCES categories(id) ON DELETE CASCADE,
@@ -108,7 +149,7 @@ async function runMigrations() {
       is_active BOOLEAN DEFAULT TRUE
     );
 
-    -- 8. Combo Deals Table
+    -- Combo Deals Table
     CREATE TABLE IF NOT EXISTS combo_deals (
       id SERIAL PRIMARY KEY,
       name VARCHAR(255) NOT NULL,
@@ -123,34 +164,23 @@ async function runMigrations() {
       is_active BOOLEAN DEFAULT TRUE
     );
 
-    -- 9. Inventory Items Table
-    CREATE TABLE IF NOT EXISTS inventory_items (
-      id SERIAL PRIMARY KEY,
-      ingredient_name VARCHAR(255) NOT NULL,
-      unit_price DECIMAL(10, 2) NOT NULL,
-      unit_type VARCHAR(50) NOT NULL DEFAULT 'pc',
-      stock_amount DECIMAL(10, 2) NOT NULL,
-      stock_status VARCHAR(100) NOT NULL DEFAULT 'In Stock'
-    );
-
-    -- 10. Orders Table
+    -- Orders Table
     CREATE TABLE IF NOT EXISTS orders (
       id SERIAL PRIMARY KEY,
       order_number VARCHAR(100) UNIQUE NOT NULL,
       order_source VARCHAR(50) NOT NULL DEFAULT 'App',
       order_type VARCHAR(50) NOT NULL DEFAULT 'Delivery',
-      customer_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+      customer_id INTEGER REFERENCES customers(id) ON DELETE SET NULL,
       customer_name VARCHAR(255),
       customer_phone VARCHAR(100),
       delivery_address TEXT,
       subtotal DECIMAL(10, 2) NOT NULL,
       delivery_fee DECIMAL(10, 2) DEFAULT 0.00,
       total_amount DECIMAL(10, 2) NOT NULL,
-      status VARCHAR(100) NOT NULL DEFAULT 'Just Placed',
       created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
     );
 
-    -- 11. Order Items Table
+    -- Order Items Table
     CREATE TABLE IF NOT EXISTS order_items (
       id SERIAL PRIMARY KEY,
       order_id INTEGER REFERENCES orders(id) ON DELETE CASCADE,
@@ -158,11 +188,10 @@ async function runMigrations() {
       selected_size VARCHAR(100),
       selected_add_ons JSONB,
       quantity INTEGER NOT NULL DEFAULT 1,
-      unit_price DECIMAL(10, 2) NOT NULL,
-      special_instructions TEXT
+      unit_price DECIMAL(10, 2) NOT NULL
     );
 
-    -- 12. Employees Table
+    -- Employees Table
     CREATE TABLE IF NOT EXISTS employees (
       id SERIAL PRIMARY KEY,
       full_name VARCHAR(255) NOT NULL,
@@ -172,7 +201,7 @@ async function runMigrations() {
       join_date DATE NOT NULL DEFAULT CURRENT_DATE
     );
 
-    -- 13. System Settings Table
+    -- System Settings Table
     CREATE TABLE IF NOT EXISTS system_settings (
       id SERIAL PRIMARY KEY,
       setting_key VARCHAR(255) UNIQUE NOT NULL,
@@ -180,7 +209,7 @@ async function runMigrations() {
       updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
     );
 
-    -- 14. Audit Logs Table
+    -- Audit Logs Table
     CREATE TABLE IF NOT EXISTS audit_logs (
       id SERIAL PRIMARY KEY,
       actor_name VARCHAR(255) NOT NULL,
@@ -189,10 +218,38 @@ async function runMigrations() {
       ip_device VARCHAR(255),
       timestamp TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
     );
+
+    -- Authorized Devices Table
+    CREATE TABLE IF NOT EXISTS authorized_devices (
+      id SERIAL PRIMARY KEY,
+      device_id VARCHAR(255) UNIQUE NOT NULL,
+      device_name VARCHAR(255) NOT NULL,
+      ip_address VARCHAR(100),
+      status VARCHAR(50) NOT NULL DEFAULT 'pending_approval',
+      first_seen TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+      last_seen TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+      approved_at TIMESTAMPTZ
+    );
+
+    -- Sales Table
+    CREATE TABLE IF NOT EXISTS sales (
+      id SERIAL PRIMARY KEY,
+      order_id INTEGER REFERENCES orders(id) ON DELETE CASCADE,
+      order_number VARCHAR(100) NOT NULL,
+      order_source VARCHAR(50) NOT NULL,
+      order_type VARCHAR(50) NOT NULL,
+      item_name VARCHAR(255) NOT NULL,
+      category_name VARCHAR(255),
+      quantity INTEGER NOT NULL DEFAULT 1,
+      unit_price DECIMAL(10, 2) NOT NULL,
+      total_price DECIMAL(10, 2) NOT NULL,
+      sale_date DATE NOT NULL DEFAULT CURRENT_DATE,
+      created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+    );
   `;
     try {
         await db_js_1.pool.query(migrationSQL);
-        console.log('✅ Success migration: All 14 PostgreSQL database tables verified and migrated successfully.');
+        console.log('✅ Success migration: All database tables & schema corrections applied successfully.');
     }
     catch (error) {
         console.error('❌ Migration failed:', error);
