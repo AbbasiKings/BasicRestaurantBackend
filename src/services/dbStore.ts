@@ -1,14 +1,11 @@
 import { query } from '../config/db.js';
 import { VALUES } from '../constants/values.js';
 import { STRINGS } from '../constants/strings.js';
-import { DeviceStatus, PricingMode } from '../types/enums.js';
+import { DeviceStatus, AddOnPricingMode, ItemPricingType } from '../types/enums.js';
 import {
   Category,
   MenuItem,
   ComboDeal,
-  Customer,
-  Order,
-  OrderItem,
   Employee,
   AuditLog,
   AuthorizedDevice,
@@ -16,7 +13,7 @@ import {
 } from '../types/models.js';
 
 // ==========================================
-// 1. CATEGORIES MANAGEMENT
+// 1. CATEGORIES MANAGEMENT (RELATIONAL)
 // ==========================================
 export async function getAllCategoriesWithRelations() {
   const catRes = await query(`SELECT * FROM categories ORDER BY display_order ASC, id ASC;`);
@@ -35,6 +32,18 @@ export async function getAllCategoriesWithRelations() {
     [catIds]
   );
 
+  const addonIds = addOnsRes.rows.map((a: any) => a.id);
+  let addonPricesRes: any = { rows: [] };
+  if (addonIds.length > 0) {
+    addonPricesRes = await query(
+      `SELECT cap.*, cs.size_name
+       FROM category_addon_prices cap
+       JOIN category_sizes cs ON cap.category_size_id = cs.id
+       WHERE cap.category_addon_id = ANY($1::int[]) ORDER BY cap.id ASC;`,
+      [addonIds]
+    );
+  }
+
   return categories.map((c) => ({
     id: c.id,
     name: c.name,
@@ -51,37 +60,109 @@ export async function getAllCategoriesWithRelations() {
       })),
     addOns: addOnsRes.rows
       .filter((a: any) => a.category_id === c.id)
-      .map((a: any) => ({
-        id: a.id,
-        enabled: true,
-        add_on_name: a.add_on_name,
-        pricing_mode: (a.pricing_mode as PricingMode) || PricingMode.SINGLE,
-        price: 0,
-        size_prices: typeof a.size_pricing === 'string' ? JSON.parse(a.size_pricing) : (a.size_pricing || []),
-      })),
+      .map((a: any) => {
+        const sizePrices = addonPricesRes.rows
+          .filter((sp: any) => sp.category_addon_id === a.id)
+          .map((sp: any) => ({
+            category_size_id: sp.category_size_id,
+            size_name: sp.size_name,
+            price: Number(sp.price),
+          }));
+
+        return {
+          id: a.id,
+          enabled: true,
+          add_on_name: a.add_on_name,
+          pricing_mode: (a.pricing_mode as AddOnPricingMode) || AddOnPricingMode.FLAT,
+          base_price: Number(a.base_price) || 0,
+          price: Number(a.base_price) || 0,
+          size_prices: sizePrices,
+        };
+      }),
   }));
 }
 
 // ==========================================
-// 2. MENU ITEMS & COMBO DEALS
+// 2. MENU ITEMS & COMBO DEALS (RELATIONAL)
 // ==========================================
-export async function getAllMenuItems(): Promise<MenuItem[]> {
-  const res = await query(`SELECT * FROM menu_items ORDER BY id DESC;`);
-  return res.rows.map((m: any) => ({
-    id: m.id,
-    category_id: m.category_id,
-    name: m.name,
-    description: m.description || '',
-    image_url: m.image_url || '',
-    has_variants: true,
-    single_price: null,
-    sizes: [],
-    addons: [],
-    is_active: m.is_active,
-    is_time_limited: Boolean(m.is_time_limited),
-    valid_from: m.valid_from,
-    valid_to: m.valid_to,
-  }));
+export async function getAllMenuItems(): Promise<any[]> {
+  const itemRes = await query(`SELECT * FROM menu_items ORDER BY id DESC;`);
+  const items: MenuItem[] = itemRes.rows;
+
+  if (items.length === 0) return [];
+
+  const itemIds = items.map((i) => i.id);
+
+  const itemSizesRes = await query(
+    `SELECT * FROM menu_item_sizes WHERE menu_item_id = ANY($1::int[]) ORDER BY display_order ASC, id ASC;`,
+    [itemIds]
+  );
+
+  const itemAddonsRes = await query(
+    `SELECT * FROM menu_item_addons WHERE menu_item_id = ANY($1::int[]) ORDER BY id ASC;`,
+    [itemIds]
+  );
+
+  const addonIds = itemAddonsRes.rows.map((a: any) => a.id);
+  let addonPricesRes: any = { rows: [] };
+  if (addonIds.length > 0) {
+    addonPricesRes = await query(
+      `SELECT ap.*, mis.size_name
+       FROM menu_item_addon_prices ap
+       JOIN menu_item_sizes mis ON ap.menu_item_size_id = mis.id
+       WHERE ap.menu_item_addon_id = ANY($1::int[]) ORDER BY ap.id ASC;`,
+      [addonIds]
+    );
+  }
+
+  return items.map((m) => {
+    const sizes = itemSizesRes.rows
+      .filter((s: any) => s.menu_item_id === m.id)
+      .map((s: any) => ({
+        id: s.id,
+        size_name: s.size_name,
+        price: Number(s.price),
+      }));
+
+    const addons = itemAddonsRes.rows
+      .filter((a: any) => a.menu_item_id === m.id)
+      .map((a: any) => {
+        const sizePrices = addonPricesRes.rows
+          .filter((ap: any) => ap.menu_item_addon_id === a.id)
+          .map((ap: any) => ({
+            menu_item_size_id: ap.menu_item_size_id,
+            size_name: ap.size_name,
+            price: Number(ap.price),
+          }));
+
+        return {
+          id: a.id,
+          addon_name: a.addon_name,
+          pricing_mode: (a.pricing_mode as AddOnPricingMode) || AddOnPricingMode.FLAT,
+          flat_price: Number(a.flat_price) || 0,
+          price: Number(a.flat_price) || 0,
+          size_prices: sizePrices,
+        };
+      });
+
+    return {
+      id: m.id,
+      category_id: m.category_id,
+      name: m.name,
+      description: m.description || '',
+      image_url: m.image_url || '',
+      pricing_type: (m.pricing_type as ItemPricingType) || ItemPricingType.VARIABLE,
+      has_variants: m.pricing_type !== 'fixed',
+      base_price: m.base_price !== null ? Number(m.base_price) : null,
+      single_price: m.base_price !== null ? Number(m.base_price) : null,
+      sizes,
+      addons,
+      is_time_limited: Boolean(m.is_time_limited),
+      valid_from: m.valid_from,
+      valid_to: m.valid_to,
+      is_active: m.is_active,
+    };
+  });
 }
 
 export async function getAllComboDeals(): Promise<ComboDeal[]> {

@@ -1,4 +1,4 @@
-import { PricingMode } from './enums.js';
+import { AddOnPricingMode, ItemPricingType } from './enums.js';
 
 export interface ApiResponseDTO<T = any> {
   success: boolean;
@@ -22,6 +22,7 @@ export interface SizeInputDTO {
   sizeName?: string;
   base_price?: number;
   price?: number;
+  display_order?: number;
 }
 
 export interface AddOnInputDTO {
@@ -29,9 +30,12 @@ export interface AddOnInputDTO {
   enabled?: boolean;
   add_on_name?: string;
   addonName?: string;
+  addon_name?: string;
   name?: string;
-  pricing_mode?: PricingMode;
-  pricingMode?: PricingMode;
+  pricing_mode?: AddOnPricingMode | string;
+  pricingMode?: AddOnPricingMode | string;
+  base_price?: number;
+  flat_price?: number;
   price?: number;
   size_prices?: any[];
   sizePrices?: any[];
@@ -48,6 +52,10 @@ export interface CreateMenuItemDTO {
   name: string;
   description?: string;
   image_url?: string;
+  pricing_type?: ItemPricingType | string;
+  pricingType?: ItemPricingType | string;
+  base_price?: number;
+  basePrice?: number;
   is_time_limited?: boolean;
   valid_from?: string;
   valid_to?: string;

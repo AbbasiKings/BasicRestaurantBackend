@@ -1,4 +1,4 @@
-import { DeviceStatus, PricingMode } from './enums.js';
+import { DeviceStatus, AddOnPricingMode, ItemPricingType } from './enums.js';
 
 export interface Admin {
   id: number;
@@ -43,8 +43,15 @@ export interface CategoryAddOn {
   id: number;
   category_id: number;
   add_on_name: string;
-  pricing_mode: PricingMode;
-  size_pricing: any;
+  pricing_mode: AddOnPricingMode;
+  base_price: number;
+}
+
+export interface CategoryAddOnPrice {
+  id: number;
+  category_addon_id: number;
+  category_size_id: number;
+  price: number;
 }
 
 export interface MenuItem {
@@ -53,10 +60,35 @@ export interface MenuItem {
   name: string;
   description?: string | null;
   image_url?: string | null;
+  pricing_type: ItemPricingType;
+  base_price?: number | null;
   is_time_limited: boolean;
   valid_from?: string | null;
   valid_to?: string | null;
   is_active: boolean;
+}
+
+export interface MenuItemSize {
+  id: number;
+  menu_item_id: number;
+  size_name: string;
+  price: number;
+  display_order: number;
+}
+
+export interface MenuItemAddOn {
+  id: number;
+  menu_item_id: number;
+  addon_name: string;
+  pricing_mode: AddOnPricingMode;
+  flat_price: number;
+}
+
+export interface MenuItemAddOnPrice {
+  id: number;
+  menu_item_addon_id: number;
+  menu_item_size_id: number;
+  price: number;
 }
 
 export interface ComboDeal {

@@ -58,7 +58,7 @@ async function runMigrations() {
       END IF;
     END $$;
 
-    -- 2. Core Schema Table Definitions (Guarantees all tables exist)
+    -- 2. Core Schema Table Definitions
 
     -- Admins Table
     CREATE TABLE IF NOT EXISTS admins (
@@ -109,8 +109,17 @@ async function runMigrations() {
       id SERIAL PRIMARY KEY,
       category_id INTEGER REFERENCES categories(id) ON DELETE CASCADE,
       add_on_name VARCHAR(255) NOT NULL,
-      pricing_mode VARCHAR(50) NOT NULL DEFAULT 'single',
-      size_pricing JSONB NOT NULL
+      pricing_mode VARCHAR(20) DEFAULT 'flat',
+      base_price DECIMAL(10, 2) DEFAULT 0.00
+    );
+
+    -- Category Add-on Size Prices Table (Replaces JSON array)
+    CREATE TABLE IF NOT EXISTS category_addon_prices (
+      id SERIAL PRIMARY KEY,
+      category_addon_id INT REFERENCES category_add_ons(id) ON DELETE CASCADE,
+      category_size_id INT REFERENCES category_sizes(id) ON DELETE CASCADE,
+      price DECIMAL(10, 2) NOT NULL,
+      UNIQUE(category_addon_id, category_size_id)
     );
 
     -- Menu Items Table
@@ -120,10 +129,39 @@ async function runMigrations() {
       name VARCHAR(255) NOT NULL,
       description TEXT,
       image_url VARCHAR(500),
+      pricing_type VARCHAR(20) DEFAULT 'variable',
+      base_price DECIMAL(10, 2) DEFAULT NULL,
       is_time_limited BOOLEAN DEFAULT FALSE,
-      valid_from DATE,
-      valid_to DATE,
+      valid_from TIMESTAMPTZ NULL,
+      valid_to TIMESTAMPTZ NULL,
       is_active BOOLEAN DEFAULT TRUE
+    );
+
+    -- Menu Item Sizes Table (Snapshot)
+    CREATE TABLE IF NOT EXISTS menu_item_sizes (
+      id SERIAL PRIMARY KEY,
+      menu_item_id INT REFERENCES menu_items(id) ON DELETE CASCADE,
+      size_name VARCHAR(50) NOT NULL,
+      price DECIMAL(10, 2) NOT NULL,
+      display_order INT DEFAULT 0
+    );
+
+    -- Menu Item Add-ons Table (Snapshot)
+    CREATE TABLE IF NOT EXISTS menu_item_addons (
+      id SERIAL PRIMARY KEY,
+      menu_item_id INT REFERENCES menu_items(id) ON DELETE CASCADE,
+      addon_name VARCHAR(100) NOT NULL,
+      pricing_mode VARCHAR(20) DEFAULT 'flat',
+      flat_price DECIMAL(10, 2) DEFAULT 0.00
+    );
+
+    -- Menu Item Add-on Size Prices Table (Snapshot lookup)
+    CREATE TABLE IF NOT EXISTS menu_item_addon_prices (
+      id SERIAL PRIMARY KEY,
+      menu_item_addon_id INT REFERENCES menu_item_addons(id) ON DELETE CASCADE,
+      menu_item_size_id INT REFERENCES menu_item_sizes(id) ON DELETE CASCADE,
+      price DECIMAL(10, 2) NOT NULL,
+      UNIQUE(menu_item_addon_id, menu_item_size_id)
     );
 
     -- Combo Deals Table
@@ -136,8 +174,8 @@ async function runMigrations() {
       included_items_json JSONB NOT NULL,
       image_url VARCHAR(500),
       is_time_limited BOOLEAN DEFAULT FALSE,
-      valid_from DATE,
-      valid_to DATE,
+      valid_from TIMESTAMPTZ NULL,
+      valid_to TIMESTAMPTZ NULL,
       is_active BOOLEAN DEFAULT TRUE
     );
 
@@ -232,7 +270,11 @@ async function runMigrations() {
     ALTER TABLE order_items DROP COLUMN IF EXISTS special_instructions;
     DROP TABLE IF EXISTS inventory_items CASCADE;
     ALTER TABLE admins DROP COLUMN IF EXISTS last_login_ip;
-    ALTER TABLE category_add_ons ADD COLUMN IF NOT EXISTS pricing_mode VARCHAR(50) NOT NULL DEFAULT 'single';
+    ALTER TABLE category_add_ons DROP COLUMN IF EXISTS size_pricing;
+    ALTER TABLE category_add_ons ADD COLUMN IF NOT EXISTS pricing_mode VARCHAR(20) DEFAULT 'flat';
+    ALTER TABLE category_add_ons ADD COLUMN IF NOT EXISTS base_price DECIMAL(10, 2) DEFAULT 0.00;
+    ALTER TABLE menu_items ADD COLUMN IF NOT EXISTS pricing_type VARCHAR(20) DEFAULT 'variable';
+    ALTER TABLE menu_items ADD COLUMN IF NOT EXISTS base_price DECIMAL(10, 2) DEFAULT NULL;
     ALTER TABLE authorized_devices ALTER COLUMN status SET DEFAULT 'approved';
   `;
     try {

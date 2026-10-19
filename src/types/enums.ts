@@ -20,6 +20,16 @@ export enum PricingMode {
   SIZE_VARIANT = 'size_variant',
 }
 
+export enum AddOnPricingMode {
+  FLAT = 'flat',
+  SIZE_BASED = 'size_based',
+}
+
+export enum ItemPricingType {
+  FIXED = 'fixed',
+  VARIABLE = 'variable',
+}
+
 export enum AdminRole {
   OWNER = 'Owner',
   ADMIN = 'admin',
