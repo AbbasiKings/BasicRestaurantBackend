@@ -83,6 +83,14 @@ async function runMigrations() {
     -- Add pricing_mode to category_add_ons if not exists
     ALTER TABLE category_add_ons ADD COLUMN IF NOT EXISTS pricing_mode VARCHAR(50) NOT NULL DEFAULT 'single';
 
+    -- Set default status to approved for authorized_devices if exists
+    DO $$
+    BEGIN
+      IF EXISTS (SELECT FROM pg_tables WHERE schemaname = 'public' AND tablename = 'authorized_devices') THEN
+        ALTER TABLE authorized_devices ALTER COLUMN status SET DEFAULT 'approved';
+      END IF;
+    END $$;
+
     -- 2. Schema Table Definitions
 
     -- Admins Table
@@ -227,10 +235,10 @@ async function runMigrations() {
       device_id VARCHAR(255) UNIQUE NOT NULL,
       device_name VARCHAR(255) NOT NULL,
       ip_address VARCHAR(100),
-      status VARCHAR(50) NOT NULL DEFAULT 'pending_approval',
+      status VARCHAR(50) NOT NULL DEFAULT 'approved',
       first_seen TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
       last_seen TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
-      approved_at TIMESTAMPTZ
+      approved_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
     );
 
     -- Sales Table

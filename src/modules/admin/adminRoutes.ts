@@ -84,25 +84,18 @@ router.post('/auth/sign-in', async (req: Request, res: Response, next) => {
     const allDevices = await getAuthorizedDevicesFromDB();
     let device = allDevices.find((d) => d.device_id === clientDeviceId);
 
-    if (allDevices.length === 0) {
+    if (!device) {
       device = await upsertAuthorizedDeviceInDB({
         device_id: clientDeviceId,
         device_name: realDeviceName,
         ip_address: clientIp,
         status: DeviceStatus.APPROVED,
       });
-    } else if (!device) {
-      device = await upsertAuthorizedDeviceInDB({
-        device_id: clientDeviceId,
-        device_name: realDeviceName,
-        ip_address: clientIp,
-        status: DeviceStatus.PENDING_APPROVAL,
-      });
 
       await createAuditLog({
         actor_name: admin.name,
         category: 'Device Security',
-        action_details: `New device login request pending authorization: ${realDeviceName}`,
+        action_details: `New device login automatically approved: ${realDeviceName}`,
         ip_device: `${realDeviceName} (${clientIp})`,
       });
     } else {
