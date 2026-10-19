@@ -22,12 +22,15 @@ const envSchema = z.object({
   JWT_EXPIRES_IN: z.string().default('7d'),
   MAX_FILE_SIZE_MB: z.string().default('5'),
   BASE_URL: z.string().default('http://localhost:5000'),
+  CLOUDINARY_CLOUD_NAME: z.string().default('dcjrgs9cx'),
+  CLOUDINARY_API_KEY: z.string().default('575254668411548'),
+  CLOUDINARY_API_SECRET: z.string().default('Trox5vwgzffInHKazzRHkYzKl6Q'),
 });
 
 const parsedEnv = envSchema.safeParse(process.env);
 
 if (!parsedEnv.success) {
-  console.error('❌ Invalid environment variables:', parsedEnv.error.format());
+  console.error('Invalid environment variables:', parsedEnv.error.format());
   process.exit(1);
 }
 

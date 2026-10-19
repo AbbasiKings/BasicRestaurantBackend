@@ -26,10 +26,13 @@ const envSchema = zod_1.z.object({
     JWT_EXPIRES_IN: zod_1.z.string().default('7d'),
     MAX_FILE_SIZE_MB: zod_1.z.string().default('5'),
     BASE_URL: zod_1.z.string().default('http://localhost:5000'),
+    CLOUDINARY_CLOUD_NAME: zod_1.z.string().default('dcjrgs9cx'),
+    CLOUDINARY_API_KEY: zod_1.z.string().default('575254668411548'),
+    CLOUDINARY_API_SECRET: zod_1.z.string().default('Trox5vwgzffInHKazzRHkYzKl6Q'),
 });
 const parsedEnv = envSchema.safeParse(process.env);
 if (!parsedEnv.success) {
-    console.error('❌ Invalid environment variables:', parsedEnv.error.format());
+    console.error('Invalid environment variables:', parsedEnv.error.format());
     process.exit(1);
 }
 exports.env = parsedEnv.data;

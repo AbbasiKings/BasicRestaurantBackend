@@ -40,18 +40,23 @@ app.get('/health', (req, res) => {
         time: new Date().toISOString(),
     });
 });
-// Standalone Image Upload API Endpoint
-app.post('/api/upload', uploadService_js_1.uploadMiddleware.single('image'), (req, res) => {
-    if (!req.file) {
-        return res.status(400).json({ success: false, message: strings_js_1.STRINGS.NO_FILE_UPLOADED });
+// Standalone Image Upload API Endpoint (Cloudinary CDN Stream)
+app.post('/api/upload', uploadService_js_1.uploadMiddleware.single('image'), async (req, res, next) => {
+    try {
+        if (!req.file) {
+            return res.status(400).json({ success: false, message: strings_js_1.STRINGS.NO_FILE_UPLOADED });
+        }
+        const imageUrl = await (0, uploadService_js_1.uploadToCloudinary)(req.file.buffer);
+        res.json({
+            success: true,
+            message: strings_js_1.STRINGS.FILE_UPLOADED_SUCCESS,
+            filename: req.file.originalname,
+            imageUrl,
+        });
     }
-    const imageUrl = (0, uploadService_js_1.getImageUrl)(req.file.filename);
-    res.json({
-        success: true,
-        message: strings_js_1.STRINGS.FILE_UPLOADED_SUCCESS,
-        filename: req.file.filename,
-        imageUrl,
-    });
+    catch (error) {
+        next(error);
+    }
 });
 // Domain Mount Points
 app.use('/api/admin', adminRoutes_js_1.default);
@@ -62,7 +67,6 @@ const PORT = parseInt(config_js_1.env.PORT, 10) || values_js_1.VALUES.DEFAULT_PO
 server.listen(PORT, '0.0.0.0', async () => {
     console.log(`[SERVER] ${strings_js_1.STRINGS.SERVER_START} ${PORT}`);
     console.log(`[SOCKET] ${strings_js_1.STRINGS.SOCKET_INITIALIZED}`);
-    console.log(`[ROUTE] ${strings_js_1.STRINGS.UPLOADS_ROUTE} ${config_js_1.env.BASE_URL}/uploads`);
     console.log(`[ROUTE] ${strings_js_1.STRINGS.STANDALONE_UPLOAD_ENDPOINT} ${config_js_1.env.BASE_URL}/api/upload`);
     console.log(`[ROUTE] ${strings_js_1.STRINGS.ADMIN_API_BASE_ROUTE} ${config_js_1.env.BASE_URL}/api/admin`);
     console.log(`[ROUTE] ${strings_js_1.STRINGS.CUSTOMER_API_BASE_ROUTE} ${config_js_1.env.BASE_URL}/api/customer`);

@@ -16,7 +16,6 @@ import {
   CreateEmployeeDTO,
 } from '../../types/dtos.js';
 import { adminAuthGuard, AdminRequest } from '../../middleware/adminAuthGuard.js';
-import { uploadMiddleware, getImageUrl } from '../../services/uploadService.js';
 import { parseDeviceName } from '../../services/deviceService.js';
 import {
   getAllCategoriesWithRelations,
@@ -34,17 +33,22 @@ import {
   updateDeviceStatusInDB,
   getSalesDataFromDB,
 } from '../../services/dbStore.js';
+import { uploadMiddleware, uploadToCloudinary, deleteCloudinaryFile } from '../../services/uploadService.js';
 
 const router = Router();
 
-function deleteOldUploadFile(imageUrl: string | null | undefined) {
+async function deleteOldUploadFile(imageUrl: string | null | undefined) {
   if (!imageUrl) return;
   try {
-    const filename = imageUrl.split('/uploads/').pop();
-    if (filename && !filename.startsWith('http')) {
-      const filePath = path.resolve(process.cwd(), 'uploads', filename);
-      if (fs.existsSync(filePath)) {
-        fs.unlinkSync(filePath);
+    if (imageUrl.includes('res.cloudinary.com')) {
+      await deleteCloudinaryFile(imageUrl);
+    } else {
+      const filename = imageUrl.split('/uploads/').pop();
+      if (filename && !filename.startsWith('http')) {
+        const filePath = path.resolve(process.cwd(), 'uploads', filename);
+        if (fs.existsSync(filePath)) {
+          fs.unlinkSync(filePath);
+        }
       }
     }
   } catch (err) {
@@ -1071,18 +1075,22 @@ router.get('/profile', (req: AdminRequest, res: Response) => {
   res.json({ success: true, data: req.admin });
 });
 
-router.post('/upload', uploadMiddleware.single('image'), (req: Request, res: Response) => {
-  if (!req.file) {
-    return res.status(400).json({ success: false, message: STRINGS.NO_FILE_UPLOADED });
-  }
+router.post('/upload', uploadMiddleware.single('image'), async (req: Request, res: Response, next) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ success: false, message: STRINGS.NO_FILE_UPLOADED });
+    }
 
-  const imageUrl = getImageUrl(req.file.filename);
-  res.json({
-    success: true,
-    message: STRINGS.FILE_UPLOADED_SUCCESS,
-    filename: req.file.filename,
-    imageUrl,
-  });
+    const imageUrl = await uploadToCloudinary(req.file.buffer);
+    res.json({
+      success: true,
+      message: STRINGS.FILE_UPLOADED_SUCCESS,
+      filename: req.file.originalname,
+      imageUrl,
+    });
+  } catch (error) {
+    next(error);
+  }
 });
 
 export default router;

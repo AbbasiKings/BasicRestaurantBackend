@@ -14,19 +14,24 @@ const strings_js_1 = require("../../constants/strings.js");
 const values_js_1 = require("../../constants/values.js");
 const enums_js_1 = require("../../types/enums.js");
 const adminAuthGuard_js_1 = require("../../middleware/adminAuthGuard.js");
-const uploadService_js_1 = require("../../services/uploadService.js");
 const deviceService_js_1 = require("../../services/deviceService.js");
 const dbStore_js_1 = require("../../services/dbStore.js");
+const uploadService_js_1 = require("../../services/uploadService.js");
 const router = (0, express_1.Router)();
-function deleteOldUploadFile(imageUrl) {
+async function deleteOldUploadFile(imageUrl) {
     if (!imageUrl)
         return;
     try {
-        const filename = imageUrl.split('/uploads/').pop();
-        if (filename && !filename.startsWith('http')) {
-            const filePath = path_1.default.resolve(process.cwd(), 'uploads', filename);
-            if (fs_1.default.existsSync(filePath)) {
-                fs_1.default.unlinkSync(filePath);
+        if (imageUrl.includes('res.cloudinary.com')) {
+            await (0, uploadService_js_1.deleteCloudinaryFile)(imageUrl);
+        }
+        else {
+            const filename = imageUrl.split('/uploads/').pop();
+            if (filename && !filename.startsWith('http')) {
+                const filePath = path_1.default.resolve(process.cwd(), 'uploads', filename);
+                if (fs_1.default.existsSync(filePath)) {
+                    fs_1.default.unlinkSync(filePath);
+                }
             }
         }
     }
@@ -918,16 +923,21 @@ router.post('/restaurant/settings', async (req, res, next) => {
 router.get('/profile', (req, res) => {
     res.json({ success: true, data: req.admin });
 });
-router.post('/upload', uploadService_js_1.uploadMiddleware.single('image'), (req, res) => {
-    if (!req.file) {
-        return res.status(400).json({ success: false, message: strings_js_1.STRINGS.NO_FILE_UPLOADED });
+router.post('/upload', uploadService_js_1.uploadMiddleware.single('image'), async (req, res, next) => {
+    try {
+        if (!req.file) {
+            return res.status(400).json({ success: false, message: strings_js_1.STRINGS.NO_FILE_UPLOADED });
+        }
+        const imageUrl = await (0, uploadService_js_1.uploadToCloudinary)(req.file.buffer);
+        res.json({
+            success: true,
+            message: strings_js_1.STRINGS.FILE_UPLOADED_SUCCESS,
+            filename: req.file.originalname,
+            imageUrl,
+        });
     }
-    const imageUrl = (0, uploadService_js_1.getImageUrl)(req.file.filename);
-    res.json({
-        success: true,
-        message: strings_js_1.STRINGS.FILE_UPLOADED_SUCCESS,
-        filename: req.file.filename,
-        imageUrl,
-    });
+    catch (error) {
+        next(error);
+    }
 });
 exports.default = router;
