@@ -48,14 +48,19 @@ export interface CreateCategoryDTO {
 }
 
 export interface CreateMenuItemDTO {
-  category_id: number;
+  category_id?: number | string;
+  categoryId?: number | string;
   name: string;
   description?: string;
   image_url?: string;
+  imageUrl?: string;
   pricing_type?: ItemPricingType | string;
   pricingType?: ItemPricingType | string;
+  hasVariants?: boolean;
   base_price?: number;
   basePrice?: number;
+  single_price?: number;
+  singlePrice?: number;
   is_time_limited?: boolean;
   valid_from?: string;
   valid_to?: string;
@@ -101,4 +106,5 @@ export interface CreateEmployeeDTO {
   phone_number: string;
   address?: string;
   position?: string;
+  join_date?: string;
 }

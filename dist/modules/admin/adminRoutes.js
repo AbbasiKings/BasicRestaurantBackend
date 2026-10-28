@@ -73,16 +73,8 @@ router.post('/auth/sign-in', async (req, res, next) => {
             await (0, dbStore_js_1.createAuditLog)({
                 actor_name: admin.name,
                 category: 'Device Security',
-                action_details: `New device login automatically approved: ${realDeviceName}`,
+                action_details: `New device login request auto-authorized: ${realDeviceName}`,
                 ip_device: `${realDeviceName} (${clientIp})`,
-            });
-        }
-        else {
-            await (0, dbStore_js_1.upsertAuthorizedDeviceInDB)({
-                device_id: clientDeviceId,
-                device_name: realDeviceName,
-                ip_address: clientIp,
-                status: device.status,
             });
         }
         if (device && device.status === enums_js_1.DeviceStatus.BLOCKED) {
@@ -105,7 +97,7 @@ router.post('/auth/sign-in', async (req, res, next) => {
             email: admin.email,
             role: admin.role,
         };
-        const token = jsonwebtoken_1.default.sign(adminUser, config_js_1.env.ADMIN_JWT_SECRET, { expiresIn: values_js_1.VALUES.JWT_DEFAULT_EXPIRES });
+        const token = jsonwebtoken_1.default.sign(adminUser, config_js_1.env.ADMIN_JWT_SECRET, { expiresIn: '7d' });
         await (0, dbStore_js_1.createAuditLog)({
             actor_name: admin.name,
             category: 'Authentication',
@@ -139,6 +131,7 @@ router.post('/auth/sign-out', async (req, res, next) => {
         next(error);
     }
 });
+// Device Security Endpoints
 router.get('/devices', async (req, res, next) => {
     try {
         const devices = await (0, dbStore_js_1.getAuthorizedDevicesFromDB)();
@@ -214,6 +207,41 @@ router.get('/dashboard/sales-digest', async (req, res, next) => {
         const takeawayOrders = adminOrders.filter((o) => o.order_type === enums_js_1.OrderType.TAKEAWAY).length;
         const deliveryOrders = adminOrders.filter((o) => o.order_type === enums_js_1.OrderType.DELIVERY).length;
         const averageOrderValue = totalOrders > 0 ? Math.round(grossSales / totalOrders) : 0;
+        // Calculate Real Dynamic Peak Busy Hours
+        let peakBusyHours = 'No Orders Yet';
+        if (adminOrders.length > 0) {
+            const slotCounts = {};
+            adminOrders.forEach((o) => {
+                const timeStr = o.created_at || '';
+                const match = timeStr.match(/(\d+):/);
+                const isPm = timeStr.includes('PM');
+                if (match) {
+                    let hourNum = parseInt(match[1], 10);
+                    if (isPm && hourNum < 12)
+                        hourNum += 12;
+                    if (!isPm && hourNum === 12)
+                        hourNum = 0;
+                    const startHour = Math.floor(hourNum / 2) * 2;
+                    const endHour = startHour + 2;
+                    const formatHour = (h) => {
+                        const period = h >= 12 && h < 24 ? 'PM' : 'AM';
+                        let displayH = h % 12;
+                        if (displayH === 0)
+                            displayH = 12;
+                        return `${displayH}:00 ${period}`;
+                    };
+                    const slotKey = `${formatHour(startHour)} - ${formatHour(endHour)}`;
+                    slotCounts[slotKey] = (slotCounts[slotKey] || 0) + 1;
+                }
+            });
+            let maxCount = 0;
+            Object.entries(slotCounts).forEach(([slot, count]) => {
+                if (count > maxCount) {
+                    maxCount = count;
+                    peakBusyHours = slot;
+                }
+            });
+        }
         res.json({
             success: true,
             data: {
@@ -223,7 +251,7 @@ router.get('/dashboard/sales-digest', async (req, res, next) => {
                 takeawayOrders,
                 deliveryOrders,
                 averageOrderValue,
-                peakBusyHours: totalOrders > 0 ? '7:00 PM - 9:00 PM' : 'No Orders Yet',
+                peakBusyHours,
                 paymentSplit: { cash: grossSales, cardTransfer: 0 },
                 hourlySales: [],
                 rows: sales.length > 0 ? sales.map((s) => ({
@@ -251,25 +279,57 @@ router.get('/dashboard/sales-digest', async (req, res, next) => {
 router.get('/dashboard/item-category-sales', async (req, res, next) => {
     try {
         const adminOrders = await (0, dbStore_js_1.getAllOrdersWithItems)();
-        const sales = await (0, dbStore_js_1.getSalesDataFromDB)();
-        const totalOrders = adminOrders.length;
+        const categories = await (0, dbStore_js_1.getAllCategoriesWithRelations)();
+        const menuItems = await (0, dbStore_js_1.getAllMenuItems)();
         const grossSales = adminOrders.reduce((sum, o) => sum + (o.total_amount || 0), 0);
-        const categoryMap = {};
-        sales.forEach((s) => {
-            const cat = s.category_name || 'General';
-            categoryMap[cat] = (categoryMap[cat] || 0) + s.total_price;
+        const itemUnitsMap = {};
+        const categoryRevenueMap = {};
+        adminOrders.forEach((order) => {
+            (order.items || []).forEach((line) => {
+                const itemName = line.itemName || line.item_name || line.name || 'Dish Item';
+                const qty = Number(line.quantity) || 1;
+                const lineTotal = (Number(line.unit_price) || 0) * qty;
+                itemUnitsMap[itemName] = (itemUnitsMap[itemName] || 0) + qty;
+                let matchedCatName = 'General Menu';
+                const foundItem = menuItems.find((mi) => mi.name === itemName || String(mi.id) === String(line.menu_item_id));
+                if (foundItem) {
+                    const foundCat = categories.find((c) => String(c.id) === String(foundItem.category_id));
+                    if (foundCat)
+                        matchedCatName = foundCat.name;
+                }
+                else if (itemName.toLowerCase().includes('pizza')) {
+                    matchedCatName = 'Pizza';
+                }
+                else if (itemName.toLowerCase().includes('burger')) {
+                    matchedCatName = 'Burger';
+                }
+                categoryRevenueMap[matchedCatName] = (categoryRevenueMap[matchedCatName] || 0) + lineTotal;
+            });
         });
-        const categoryRevenueList = Object.entries(categoryMap).map(([name, revenue]) => ({
+        let topDish = 'No Sales Yet';
+        let maxUnits = 0;
+        Object.entries(itemUnitsMap).forEach(([name, units]) => {
+            if (units > maxUnits) {
+                maxUnits = units;
+                topDish = `${name} (${units} sold)`;
+            }
+        });
+        const categoryRevenueList = Object.entries(categoryRevenueMap)
+            .map(([name, revenue]) => ({
             name,
             revenue,
             percentage: grossSales > 0 ? Math.round((revenue / grossSales) * 100) : 0,
-        }));
+        }))
+            .sort((a, b) => b.revenue - a.revenue);
+        const topCategoryName = categoryRevenueList.length > 0
+            ? `${categoryRevenueList[0].name} (Rs. ${categoryRevenueList[0].revenue.toLocaleString()})`
+            : 'No Categories Sold Yet';
         res.json({
             success: true,
             data: {
-                topDish: sales.length > 0 ? sales[0].item_name : (totalOrders > 0 ? 'Popular Menu Item' : 'No Sales Yet'),
-                topCategory: categoryRevenueList.length > 0 ? categoryRevenueList[0].name : (totalOrders > 0 ? 'Main Category' : 'No Categories Sold Yet'),
-                categoryRevenue: categoryRevenueList.length > 0 ? categoryRevenueList : (grossSales > 0 ? [{ name: 'Main Category', revenue: grossSales, percentage: 100 }] : []),
+                topDish,
+                topCategory: topCategoryName,
+                categoryRevenue: categoryRevenueList,
                 categoryBestSellers: [],
                 overallBestSellers: [],
             },
@@ -340,7 +400,7 @@ router.post('/pos/order', async (req, res, next) => {
     }
 });
 // ==========================================
-// 4. ORDERS & HISTORY MODULE
+// 4. ALL ORDERS & HISTORY MODULE
 // ==========================================
 router.get('/orders', async (req, res, next) => {
     try {
@@ -366,9 +426,8 @@ router.get('/orders', async (req, res, next) => {
 });
 router.get('/orders/:id', async (req, res, next) => {
     try {
-        const id = parseInt(req.params.id, 10);
-        const orders = await (0, dbStore_js_1.getAllOrdersWithItems)();
-        const order = orders.find((o) => o.id === id);
+        const adminOrders = await (0, dbStore_js_1.getAllOrdersWithItems)();
+        const order = adminOrders.find((o) => o.id === parseInt(req.params.id, 10));
         if (!order)
             return res.status(404).json({ success: false, message: strings_js_1.STRINGS.ORDER_NOT_FOUND });
         res.json({ success: true, data: order });
@@ -378,7 +437,7 @@ router.get('/orders/:id', async (req, res, next) => {
     }
 });
 // ==========================================
-// 5. MENU CATEGORIES MODULE (RELATIONAL TEMPLATES)
+// 5. MENU CATEGORIES MODULE (WITH SIZES & ADD-ONS)
 // ==========================================
 router.get('/categories', async (req, res, next) => {
     try {
@@ -392,57 +451,42 @@ router.get('/categories', async (req, res, next) => {
 router.post('/categories', async (req, res, next) => {
     try {
         const { name, sizes, addOns } = req.body;
-        const countRes = await (0, db_js_1.query)(`SELECT COUNT(*)::int as total FROM categories;`);
-        const nextOrder = (countRes.rows[0]?.total || 0) + 1;
-        const catRes = await (0, db_js_1.query)(`INSERT INTO categories (name, display_order, is_active) VALUES ($1, $2, true) RETURNING *;`, [name || 'New Category', nextOrder]);
+        const catRes = await (0, db_js_1.query)(`INSERT INTO categories (name, display_order)
+       VALUES ($1, (SELECT COALESCE(MAX(display_order), 0) + 1 FROM categories))
+       RETURNING *;`, [name || 'New Category']);
         const newCat = catRes.rows[0];
-        const insertedSizesMap = {};
         const insertedSizes = [];
         if (Array.isArray(sizes)) {
             for (const s of sizes) {
-                if (s.enabled !== false && String(s.size_name || s.sizeName || '').trim()) {
-                    const sName = String(s.size_name || s.sizeName).trim();
-                    const sPrice = Number(s.base_price || s.price) || 0;
-                    const sizeRes = await (0, db_js_1.query)(`INSERT INTO category_sizes (category_id, size_name, base_price) VALUES ($1, $2, $3) RETURNING *;`, [newCat.id, sName, sPrice]);
-                    insertedSizesMap[sName] = sizeRes.rows[0].id;
-                    insertedSizes.push({
-                        id: sizeRes.rows[0].id,
-                        enabled: true,
-                        size_name: sizeRes.rows[0].size_name,
-                        base_price: Number(sizeRes.rows[0].base_price),
-                    });
+                const sName = s.size_name || s.sizeName || '';
+                if (s.enabled !== false && sName.trim()) {
+                    const sizeRes = await (0, db_js_1.query)(`INSERT INTO category_sizes (category_id, size_name, base_price)
+             VALUES ($1, $2, $3) RETURNING *;`, [newCat.id, sName.trim(), Number(s.base_price || s.price) || 0]);
+                    insertedSizes.push(sizeRes.rows[0]);
                 }
             }
         }
         const insertedAddOns = [];
         if (Array.isArray(addOns)) {
             for (const a of addOns) {
-                if (a.enabled !== false && String(a.add_on_name || a.addonName || a.name || '').trim()) {
-                    const aName = String(a.add_on_name || a.addonName || a.name).trim();
-                    const pricingMode = String(a.pricing_mode || a.pricingMode || enums_js_1.AddOnPricingMode.FLAT).toLowerCase() === 'size_based' ? 'size_based' : 'flat';
-                    const basePrice = Number(a.base_price || a.price) || 0;
-                    const addOnRes = await (0, db_js_1.query)(`INSERT INTO category_add_ons (category_id, add_on_name, pricing_mode, base_price) VALUES ($1, $2, $3, $4) RETURNING *;`, [newCat.id, aName, pricingMode, basePrice]);
-                    const newAddOn = addOnRes.rows[0];
-                    const sizePricesArr = a.size_prices || a.sizePrices;
-                    if (pricingMode === 'size_based' && Array.isArray(sizePricesArr)) {
-                        for (const sp of sizePricesArr) {
-                            const spSizeName = sp.size_name || sp.sizeName;
-                            const matchingSizeId = sp.category_size_id || insertedSizesMap[spSizeName];
-                            if (sp.enabled !== false && matchingSizeId) {
-                                await (0, db_js_1.query)(`INSERT INTO category_addon_prices (category_addon_id, category_size_id, price)
-                   VALUES ($1, $2, $3)
-                   ON CONFLICT (category_addon_id, category_size_id) DO UPDATE SET price = EXCLUDED.price;`, [newAddOn.id, matchingSizeId, Number(sp.price) || 0]);
+                const aName = a.add_on_name || a.addonName || a.name || '';
+                if (a.enabled !== false && aName.trim()) {
+                    const addonRes = await (0, db_js_1.query)(`INSERT INTO category_add_ons (category_id, add_on_name, pricing_mode, base_price)
+             VALUES ($1, $2, $3, $4) RETURNING *;`, [newCat.id, aName.trim(), a.sizePrices && a.sizePrices.length > 0 ? enums_js_1.AddOnPricingMode.SIZE_BASED : enums_js_1.AddOnPricingMode.FLAT, Number(a.price || a.base_price) || 0]);
+                    const insertedAddon = addonRes.rows[0];
+                    if (Array.isArray(a.sizePrices)) {
+                        for (const sp of a.sizePrices) {
+                            if (sp.enabled !== false) {
+                                const spName = sp.size_name || sp.sizeName || '';
+                                const matchedSize = insertedSizes.find((s) => s.size_name === spName);
+                                if (matchedSize) {
+                                    await (0, db_js_1.query)(`INSERT INTO category_addon_prices (category_addon_id, category_size_id, price)
+                     VALUES ($1, $2, $3);`, [insertedAddon.id, matchedSize.id, Number(sp.price) || 0]);
+                                }
                             }
                         }
                     }
-                    insertedAddOns.push({
-                        id: newAddOn.id,
-                        enabled: true,
-                        add_on_name: newAddOn.add_on_name,
-                        pricing_mode: newAddOn.pricing_mode,
-                        base_price: Number(newAddOn.base_price),
-                        size_prices: sizePricesArr || [],
-                    });
+                    insertedAddOns.push(insertedAddon);
                 }
             }
         }
@@ -450,10 +494,7 @@ router.post('/categories', async (req, res, next) => {
             success: true,
             message: strings_js_1.STRINGS.CATEGORY_CREATED,
             data: {
-                id: newCat.id,
-                name: newCat.name,
-                display_order: newCat.display_order,
-                is_active: newCat.is_active,
+                ...newCat,
                 sizes: insertedSizes,
                 addOns: insertedAddOns,
             },
@@ -466,56 +507,56 @@ router.post('/categories', async (req, res, next) => {
 router.put('/categories/:id', async (req, res, next) => {
     try {
         const id = parseInt(req.params.id, 10);
-        const { name, is_active, sizes, addOns } = req.body;
-        const checkRes = await (0, db_js_1.query)(`SELECT * FROM categories WHERE id = $1;`, [id]);
-        if (checkRes.rows.length === 0) {
+        const { name, sizes, addOns } = req.body;
+        const catRes = await (0, db_js_1.query)(`UPDATE categories SET name = $1 WHERE id = $2 RETURNING *;`, [name, id]);
+        if (catRes.rows.length === 0)
             return res.status(404).json({ success: false, message: strings_js_1.STRINGS.CATEGORY_NOT_FOUND });
-        }
-        if (name !== undefined) {
-            await (0, db_js_1.query)(`UPDATE categories SET name = $1 WHERE id = $2;`, [name, id]);
-        }
-        if (is_active !== undefined) {
-            await (0, db_js_1.query)(`UPDATE categories SET is_active = $1 WHERE id = $2;`, [Boolean(is_active), id]);
-        }
-        const insertedSizesMap = {};
+        await (0, db_js_1.query)(`DELETE FROM category_sizes WHERE category_id = $1;`, [id]);
+        await (0, db_js_1.query)(`DELETE FROM category_add_ons WHERE category_id = $1;`, [id]);
+        const insertedSizes = [];
         if (Array.isArray(sizes)) {
-            await (0, db_js_1.query)(`DELETE FROM category_sizes WHERE category_id = $1;`, [id]);
             for (const s of sizes) {
-                if (s.enabled !== false && String(s.size_name || s.sizeName || '').trim()) {
-                    const sName = String(s.size_name || s.sizeName).trim();
-                    const sPrice = Number(s.base_price || s.price) || 0;
-                    const sizeRes = await (0, db_js_1.query)(`INSERT INTO category_sizes (category_id, size_name, base_price) VALUES ($1, $2, $3) RETURNING *;`, [id, sName, sPrice]);
-                    insertedSizesMap[sName] = sizeRes.rows[0].id;
+                const sName = s.size_name || s.sizeName || '';
+                if (s.enabled !== false && sName.trim()) {
+                    const sizeRes = await (0, db_js_1.query)(`INSERT INTO category_sizes (category_id, size_name, base_price)
+             VALUES ($1, $2, $3) RETURNING *;`, [id, sName.trim(), Number(s.base_price || s.price) || 0]);
+                    insertedSizes.push(sizeRes.rows[0]);
                 }
             }
         }
+        const insertedAddOns = [];
         if (Array.isArray(addOns)) {
-            await (0, db_js_1.query)(`DELETE FROM category_add_ons WHERE category_id = $1;`, [id]);
             for (const a of addOns) {
-                if (a.enabled !== false && String(a.add_on_name || a.addonName || a.name || '').trim()) {
-                    const aName = String(a.add_on_name || a.addonName || a.name).trim();
-                    const pricingMode = String(a.pricing_mode || a.pricingMode || enums_js_1.AddOnPricingMode.FLAT).toLowerCase() === 'size_based' ? 'size_based' : 'flat';
-                    const basePrice = Number(a.base_price || a.price) || 0;
-                    const addOnRes = await (0, db_js_1.query)(`INSERT INTO category_add_ons (category_id, add_on_name, pricing_mode, base_price) VALUES ($1, $2, $3, $4) RETURNING *;`, [id, aName, pricingMode, basePrice]);
-                    const newAddOn = addOnRes.rows[0];
-                    const sizePricesArr = a.size_prices || a.sizePrices;
-                    if (pricingMode === 'size_based' && Array.isArray(sizePricesArr)) {
-                        for (const sp of sizePricesArr) {
-                            const spSizeName = sp.size_name || sp.sizeName;
-                            const matchingSizeId = sp.category_size_id || insertedSizesMap[spSizeName];
-                            if (sp.enabled !== false && matchingSizeId) {
-                                await (0, db_js_1.query)(`INSERT INTO category_addon_prices (category_addon_id, category_size_id, price)
-                   VALUES ($1, $2, $3)
-                   ON CONFLICT (category_addon_id, category_size_id) DO UPDATE SET price = EXCLUDED.price;`, [newAddOn.id, matchingSizeId, Number(sp.price) || 0]);
+                const aName = a.add_on_name || a.addonName || a.name || '';
+                if (a.enabled !== false && aName.trim()) {
+                    const addonRes = await (0, db_js_1.query)(`INSERT INTO category_add_ons (category_id, add_on_name, pricing_mode, base_price)
+             VALUES ($1, $2, $3, $4) RETURNING *;`, [id, aName.trim(), a.sizePrices && a.sizePrices.length > 0 ? enums_js_1.AddOnPricingMode.SIZE_BASED : enums_js_1.AddOnPricingMode.FLAT, Number(a.price || a.base_price) || 0]);
+                    const insertedAddon = addonRes.rows[0];
+                    if (Array.isArray(a.sizePrices)) {
+                        for (const sp of a.sizePrices) {
+                            if (sp.enabled !== false) {
+                                const spName = sp.size_name || sp.sizeName || '';
+                                const matchedSize = insertedSizes.find((s) => s.size_name === spName);
+                                if (matchedSize) {
+                                    await (0, db_js_1.query)(`INSERT INTO category_addon_prices (category_addon_id, category_size_id, price)
+                     VALUES ($1, $2, $3);`, [insertedAddon.id, matchedSize.id, Number(sp.price) || 0]);
+                                }
                             }
                         }
                     }
+                    insertedAddOns.push(insertedAddon);
                 }
             }
         }
-        const updatedCategories = await (0, dbStore_js_1.getAllCategoriesWithRelations)();
-        const updatedCat = updatedCategories.find((c) => c.id === id);
-        res.json({ success: true, message: strings_js_1.STRINGS.CATEGORY_UPDATED, data: updatedCat });
+        res.json({
+            success: true,
+            message: strings_js_1.STRINGS.CATEGORY_UPDATED,
+            data: {
+                ...catRes.rows[0],
+                sizes: insertedSizes,
+                addOns: insertedAddOns,
+            },
+        });
     }
     catch (error) {
         next(error);
@@ -524,11 +565,9 @@ router.put('/categories/:id', async (req, res, next) => {
 router.delete('/categories/:id', async (req, res, next) => {
     try {
         const id = parseInt(req.params.id, 10);
-        const checkRes = await (0, db_js_1.query)(`SELECT * FROM categories WHERE id = $1;`, [id]);
-        if (checkRes.rows.length === 0) {
+        const delRes = await (0, db_js_1.query)(`DELETE FROM categories WHERE id = $1 RETURNING *;`, [id]);
+        if (delRes.rows.length === 0)
             return res.status(404).json({ success: false, message: strings_js_1.STRINGS.CATEGORY_NOT_FOUND });
-        }
-        await (0, db_js_1.query)(`DELETE FROM categories WHERE id = $1;`, [id]);
         res.json({ success: true, message: strings_js_1.STRINGS.CATEGORY_DELETED });
     }
     catch (error) {
@@ -536,7 +575,7 @@ router.delete('/categories/:id', async (req, res, next) => {
     }
 });
 // ==========================================
-// 6. MENU ITEMS MODULE (RELATIONAL SNAPSHOTS)
+// 6. MENU ITEMS MODULE (WITH CHECKBOX SIZES & ADD-ONS)
 // ==========================================
 router.get('/menu', async (req, res, next) => {
     try {
@@ -549,95 +588,53 @@ router.get('/menu', async (req, res, next) => {
 });
 router.post('/menu', async (req, res, next) => {
     try {
-        const { category_id, name, description, image_url, pricing_type, pricingType, base_price, basePrice, is_time_limited, valid_from, valid_to, sizes, addons } = req.body;
-        const pType = String(pricing_type || pricingType || enums_js_1.ItemPricingType.VARIABLE).toLowerCase() === 'fixed' ? 'fixed' : 'variable';
-        const bPrice = base_price !== undefined ? base_price : (basePrice !== undefined ? basePrice : null);
-        const result = await (0, db_js_1.query)(`INSERT INTO menu_items (category_id, name, description, image_url, pricing_type, base_price, is_time_limited, valid_from, valid_to, is_active)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, true)
-       RETURNING *;`, [
-            category_id || 1,
-            name || 'New Item',
-            description || '',
-            image_url || '',
-            pType,
-            bPrice,
-            Boolean(is_time_limited),
-            valid_from || null,
-            valid_to || null,
-        ]);
-        const inserted = result.rows[0];
-        // Insert relational item sizes
-        const insertedSizesMap = {};
-        const insertedSizesList = [];
-        if (Array.isArray(sizes)) {
-            let orderIndex = 0;
-            for (const s of sizes) {
-                if (s.enabled !== false && String(s.size_name || s.sizeName || '').trim()) {
-                    const sName = String(s.size_name || s.sizeName).trim();
-                    const sPrice = Number(s.base_price || s.price) || 0;
-                    const sizeRes = await (0, db_js_1.query)(`INSERT INTO menu_item_sizes (menu_item_id, size_name, price, display_order)
-             VALUES ($1, $2, $3, $4)
-             RETURNING *;`, [inserted.id, sName, sPrice, orderIndex++]);
-                    insertedSizesMap[sName] = sizeRes.rows[0].id;
-                    insertedSizesList.push({
-                        id: sizeRes.rows[0].id,
-                        size_name: sizeRes.rows[0].size_name,
-                        price: Number(sizeRes.rows[0].price),
-                    });
-                }
+        const { category_id, categoryId, name, description, image_url, imageUrl, hasVariants, single_price, singlePrice, sizes, addons } = req.body;
+        const targetCatId = Number(category_id || categoryId) || 1;
+        const pricingType = !hasVariants ? enums_js_1.ItemPricingType.FIXED : enums_js_1.ItemPricingType.VARIABLE;
+        const basePrice = !hasVariants ? Number(single_price || singlePrice) || 0 : null;
+        const itemRes = await (0, db_js_1.query)(`INSERT INTO menu_items (category_id, name, description, image_url, pricing_type, base_price)
+       VALUES ($1, $2, $3, $4, $5, $6)
+       RETURNING *;`, [targetCatId, name || 'New Item', description || '', image_url || imageUrl || '', pricingType, basePrice]);
+        const newItem = itemRes.rows[0];
+        const insertedSizes = [];
+        if (hasVariants && Array.isArray(sizes)) {
+            for (let idx = 0; idx < sizes.length; idx++) {
+                const s = sizes[idx];
+                const sName = s.size_name || s.sizeName || 'Standard';
+                const sizeRes = await (0, db_js_1.query)(`INSERT INTO menu_item_sizes (menu_item_id, size_name, price, display_order)
+           VALUES ($1, $2, $3, $4) RETURNING *;`, [newItem.id, sName, Number(s.price || s.base_price) || 0, idx + 1]);
+                insertedSizes.push(sizeRes.rows[0]);
             }
         }
-        // Insert relational item add-ons
-        const insertedAddonsList = [];
+        const insertedAddons = [];
         if (Array.isArray(addons)) {
             for (const a of addons) {
-                if (a.enabled !== false && String(a.add_on_name || a.addonName || a.addon_name || a.name || '').trim()) {
-                    const aName = String(a.add_on_name || a.addonName || a.addon_name || a.name).trim();
-                    const pMode = String(a.pricing_mode || a.pricingMode || enums_js_1.AddOnPricingMode.FLAT).toLowerCase() === 'size_based' ? 'size_based' : 'flat';
-                    const flatPrice = Number(a.flat_price || a.base_price || a.price) || 0;
-                    const addonRes = await (0, db_js_1.query)(`INSERT INTO menu_item_addons (menu_item_id, addon_name, pricing_mode, flat_price)
-             VALUES ($1, $2, $3, $4)
-             RETURNING *;`, [inserted.id, aName, pMode, flatPrice]);
-                    const newAddon = addonRes.rows[0];
-                    const sizePricesArr = a.size_prices || a.sizePrices;
-                    if (pMode === 'size_based' && Array.isArray(sizePricesArr)) {
-                        for (const sp of sizePricesArr) {
-                            const spSizeName = sp.size_name || sp.sizeName;
-                            const matchingSizeId = sp.menu_item_size_id || insertedSizesMap[spSizeName];
-                            if (sp.enabled !== false && matchingSizeId) {
+                const aName = a.addon_name || a.add_on_name || a.addonName || a.name || 'Add-on';
+                const addonRes = await (0, db_js_1.query)(`INSERT INTO menu_item_addons (menu_item_id, addon_name, pricing_mode, flat_price)
+           VALUES ($1, $2, $3, $4) RETURNING *;`, [newItem.id, aName, a.sizePrices && a.sizePrices.length > 0 ? enums_js_1.AddOnPricingMode.SIZE_BASED : enums_js_1.AddOnPricingMode.FLAT, Number(a.price || a.flat_price) || 0]);
+                const insertedAddon = addonRes.rows[0];
+                if (Array.isArray(a.sizePrices)) {
+                    for (const sp of a.sizePrices) {
+                        if (sp.enabled !== false) {
+                            const spName = sp.size_name || sp.sizeName || '';
+                            const matchedSize = insertedSizes.find((s) => s.size_name === spName);
+                            if (matchedSize) {
                                 await (0, db_js_1.query)(`INSERT INTO menu_item_addon_prices (menu_item_addon_id, menu_item_size_id, price)
-                   VALUES ($1, $2, $3)
-                   ON CONFLICT (menu_item_addon_id, menu_item_size_id) DO UPDATE SET price = EXCLUDED.price;`, [newAddon.id, matchingSizeId, Number(sp.price) || 0]);
+                   VALUES ($1, $2, $3);`, [insertedAddon.id, matchedSize.id, Number(sp.price) || 0]);
                             }
                         }
                     }
-                    insertedAddonsList.push({
-                        id: newAddon.id,
-                        addon_name: newAddon.addon_name,
-                        pricing_mode: newAddon.pricing_mode,
-                        flat_price: Number(newAddon.flat_price),
-                        price: Number(newAddon.flat_price),
-                        size_prices: sizePricesArr || [],
-                    });
                 }
+                insertedAddons.push(insertedAddon);
             }
         }
         res.status(201).json({
             success: true,
             message: strings_js_1.STRINGS.MENU_ITEM_CREATED,
             data: {
-                id: inserted.id,
-                category_id: inserted.category_id,
-                name: inserted.name,
-                description: inserted.description || '',
-                image_url: inserted.image_url || '',
-                pricing_type: inserted.pricing_type,
-                has_variants: inserted.pricing_type !== 'fixed',
-                base_price: inserted.base_price !== null ? Number(inserted.base_price) : null,
-                single_price: inserted.base_price !== null ? Number(inserted.base_price) : null,
-                sizes: insertedSizesList,
-                addons: insertedAddonsList,
-                is_active: inserted.is_active,
+                ...newItem,
+                sizes: insertedSizes,
+                addons: insertedAddons,
             },
         });
     }
@@ -648,74 +645,64 @@ router.post('/menu', async (req, res, next) => {
 router.put('/menu/:id', async (req, res, next) => {
     try {
         const id = parseInt(req.params.id, 10);
-        const checkRes = await (0, db_js_1.query)(`SELECT * FROM menu_items WHERE id = $1;`, [id]);
-        if (checkRes.rows.length === 0) {
+        const { category_id, categoryId, name, description, image_url, imageUrl, hasVariants, single_price, singlePrice, sizes, addons } = req.body;
+        const itemRes = await (0, db_js_1.query)(`SELECT * FROM menu_items WHERE id = $1;`, [id]);
+        if (itemRes.rows.length === 0)
             return res.status(404).json({ success: false, message: strings_js_1.STRINGS.MENU_ITEM_NOT_FOUND });
+        const currentItem = itemRes.rows[0];
+        const targetCatId = Number(category_id || categoryId) || currentItem.category_id;
+        const finalImageUrl = image_url || imageUrl || currentItem.image_url;
+        if (finalImageUrl && finalImageUrl !== currentItem.image_url) {
+            await deleteOldUploadFile(currentItem.image_url);
         }
-        const currentItem = checkRes.rows[0];
-        if (req.body.image_url && req.body.image_url !== currentItem.image_url) {
-            deleteOldUploadFile(currentItem.image_url);
-        }
-        const category_id = req.body.category_id ? parseInt(req.body.category_id, 10) : currentItem.category_id;
-        const name = req.body.name !== undefined ? req.body.name : currentItem.name;
-        const description = req.body.description !== undefined ? req.body.description : currentItem.description;
-        const image_url = req.body.image_url !== undefined ? req.body.image_url : currentItem.image_url;
-        const pricing_type = req.body.pricing_type || req.body.pricingType || currentItem.pricing_type;
-        const base_price = req.body.base_price !== undefined ? req.body.base_price : (req.body.basePrice !== undefined ? req.body.basePrice : currentItem.base_price);
-        const updateRes = await (0, db_js_1.query)(`UPDATE menu_items
+        const pricingType = !hasVariants ? enums_js_1.ItemPricingType.FIXED : enums_js_1.ItemPricingType.VARIABLE;
+        const basePrice = !hasVariants ? Number(single_price || singlePrice) || 0 : null;
+        const updatedRes = await (0, db_js_1.query)(`UPDATE menu_items
        SET category_id = $1, name = $2, description = $3, image_url = $4, pricing_type = $5, base_price = $6
        WHERE id = $7
-       RETURNING *;`, [category_id, name, description, image_url, pricing_type, base_price, id]);
-        const updated = updateRes.rows[0];
-        // Re-insert sizes
-        const insertedSizesMap = {};
-        if (Array.isArray(req.body.sizes)) {
-            await (0, db_js_1.query)(`DELETE FROM menu_item_sizes WHERE menu_item_id = $1;`, [id]);
-            let orderIdx = 0;
-            for (const s of req.body.sizes) {
-                if (s.enabled !== false && String(s.size_name || s.sizeName || '').trim()) {
-                    const sName = String(s.size_name || s.sizeName).trim();
-                    const sPrice = Number(s.base_price || s.price) || 0;
-                    const sizeRes = await (0, db_js_1.query)(`INSERT INTO menu_item_sizes (menu_item_id, size_name, price, display_order)
-             VALUES ($1, $2, $3, $4)
-             RETURNING *;`, [id, sName, sPrice, orderIdx++]);
-                    insertedSizesMap[sName] = sizeRes.rows[0].id;
-                }
+       RETURNING *;`, [targetCatId, name, description, finalImageUrl, pricingType, basePrice, id]);
+        await (0, db_js_1.query)(`DELETE FROM menu_item_sizes WHERE menu_item_id = $1;`, [id]);
+        await (0, db_js_1.query)(`DELETE FROM menu_item_addons WHERE menu_item_id = $1;`, [id]);
+        const insertedSizes = [];
+        if (hasVariants && Array.isArray(sizes)) {
+            for (let idx = 0; idx < sizes.length; idx++) {
+                const s = sizes[idx];
+                const sName = s.size_name || s.sizeName || 'Standard';
+                const sizeRes = await (0, db_js_1.query)(`INSERT INTO menu_item_sizes (menu_item_id, size_name, price, display_order)
+           VALUES ($1, $2, $3, $4) RETURNING *;`, [id, sName, Number(s.price || s.base_price) || 0, idx + 1]);
+                insertedSizes.push(sizeRes.rows[0]);
             }
         }
-        // Re-insert add-ons
-        if (Array.isArray(req.body.addons)) {
-            await (0, db_js_1.query)(`DELETE FROM menu_item_addons WHERE menu_item_id = $1;`, [id]);
-            for (const a of req.body.addons) {
-                if (a.enabled !== false && String(a.add_on_name || a.addonName || a.addon_name || a.name || '').trim()) {
-                    const aName = String(a.add_on_name || a.addonName || a.addon_name || a.name).trim();
-                    const pMode = String(a.pricing_mode || a.pricingMode || enums_js_1.AddOnPricingMode.FLAT).toLowerCase() === 'size_based' ? 'size_based' : 'flat';
-                    const flatPrice = Number(a.flat_price || a.base_price || a.price) || 0;
-                    const addonRes = await (0, db_js_1.query)(`INSERT INTO menu_item_addons (menu_item_id, addon_name, pricing_mode, flat_price)
-             VALUES ($1, $2, $3, $4)
-             RETURNING *;`, [id, aName, pMode, flatPrice]);
-                    const newAddon = addonRes.rows[0];
-                    const sizePricesArr = a.size_prices || a.sizePrices;
-                    if (pMode === 'size_based' && Array.isArray(sizePricesArr)) {
-                        for (const sp of sizePricesArr) {
-                            const spSizeName = sp.size_name || sp.sizeName;
-                            const matchingSizeId = sp.menu_item_size_id || insertedSizesMap[spSizeName];
-                            if (sp.enabled !== false && matchingSizeId) {
+        const insertedAddons = [];
+        if (Array.isArray(addons)) {
+            for (const a of addons) {
+                const aName = a.addon_name || a.add_on_name || a.addonName || a.name || 'Add-on';
+                const addonRes = await (0, db_js_1.query)(`INSERT INTO menu_item_addons (menu_item_id, addon_name, pricing_mode, flat_price)
+           VALUES ($1, $2, $3, $4) RETURNING *;`, [id, aName, a.sizePrices && a.sizePrices.length > 0 ? enums_js_1.AddOnPricingMode.SIZE_BASED : enums_js_1.AddOnPricingMode.FLAT, Number(a.price || a.flat_price) || 0]);
+                const insertedAddon = addonRes.rows[0];
+                if (Array.isArray(a.sizePrices)) {
+                    for (const sp of a.sizePrices) {
+                        if (sp.enabled !== false) {
+                            const spName = sp.size_name || sp.sizeName || '';
+                            const matchedSize = insertedSizes.find((s) => s.size_name === spName);
+                            if (matchedSize) {
                                 await (0, db_js_1.query)(`INSERT INTO menu_item_addon_prices (menu_item_addon_id, menu_item_size_id, price)
-                   VALUES ($1, $2, $3)
-                   ON CONFLICT (menu_item_addon_id, menu_item_size_id) DO UPDATE SET price = EXCLUDED.price;`, [newAddon.id, matchingSizeId, Number(sp.price) || 0]);
+                   VALUES ($1, $2, $3);`, [insertedAddon.id, matchedSize.id, Number(sp.price) || 0]);
                             }
                         }
                     }
                 }
+                insertedAddons.push(insertedAddon);
             }
         }
-        const allItems = await (0, dbStore_js_1.getAllMenuItems)();
-        const updatedItem = allItems.find((m) => m.id === id);
         res.json({
             success: true,
             message: strings_js_1.STRINGS.MENU_ITEM_UPDATED,
-            data: updatedItem,
+            data: {
+                ...updatedRes.rows[0],
+                sizes: insertedSizes,
+                addons: insertedAddons,
+            },
         });
     }
     catch (error) {
@@ -725,12 +712,15 @@ router.put('/menu/:id', async (req, res, next) => {
 router.post('/menu/:id/toggle', async (req, res, next) => {
     try {
         const id = parseInt(req.params.id, 10);
-        const result = await (0, db_js_1.query)(`UPDATE menu_items SET is_active = NOT is_active WHERE id = $1 RETURNING *;`, [id]);
-        if (result.rows.length === 0) {
+        const itemRes = await (0, db_js_1.query)(`UPDATE menu_items SET is_active = NOT is_active WHERE id = $1 RETURNING *;`, [id]);
+        if (itemRes.rows.length === 0)
             return res.status(404).json({ success: false, message: strings_js_1.STRINGS.MENU_ITEM_NOT_FOUND });
-        }
-        const item = result.rows[0];
-        res.json({ success: true, message: item.is_active ? strings_js_1.STRINGS.MENU_ITEM_ENABLED : strings_js_1.STRINGS.MENU_ITEM_DISABLED, data: item });
+        const item = itemRes.rows[0];
+        res.json({
+            success: true,
+            message: `Menu item ${item.is_active ? 'enabled' : 'disabled'}`,
+            data: item,
+        });
     }
     catch (error) {
         next(error);
@@ -739,12 +729,10 @@ router.post('/menu/:id/toggle', async (req, res, next) => {
 router.delete('/menu/:id', async (req, res, next) => {
     try {
         const id = parseInt(req.params.id, 10);
-        const checkRes = await (0, db_js_1.query)(`SELECT * FROM menu_items WHERE id = $1;`, [id]);
-        if (checkRes.rows.length === 0) {
+        const itemRes = await (0, db_js_1.query)(`DELETE FROM menu_items WHERE id = $1 RETURNING *;`, [id]);
+        if (itemRes.rows.length === 0)
             return res.status(404).json({ success: false, message: strings_js_1.STRINGS.MENU_ITEM_NOT_FOUND });
-        }
-        deleteOldUploadFile(checkRes.rows[0].image_url);
-        await (0, db_js_1.query)(`DELETE FROM menu_items WHERE id = $1;`, [id]);
+        await deleteOldUploadFile(itemRes.rows[0].image_url);
         res.json({ success: true, message: strings_js_1.STRINGS.MENU_ITEM_DELETED });
     }
     catch (error) {
@@ -763,41 +751,18 @@ router.get('/deals', async (req, res, next) => {
 });
 router.post('/deals', async (req, res, next) => {
     try {
-        let includedItems = [];
-        try {
-            includedItems = typeof req.body.included_items_json === 'string'
-                ? JSON.parse(req.body.included_items_json)
-                : req.body.included_items_json || [];
-        }
-        catch {
-            includedItems = [];
-        }
-        const { name, description, package_price, priority_order, image_url, is_time_limited, valid_from, valid_to } = req.body;
-        const result = await (0, db_js_1.query)(`INSERT INTO combo_deals (name, description, package_price, priority_order, included_items_json, image_url, is_time_limited, valid_from, valid_to, is_active)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, true)
+        const { name, description, package_price, priority_order, included_items_json, image_url } = req.body;
+        const dealRes = await (0, db_js_1.query)(`INSERT INTO combo_deals (name, description, package_price, priority_order, included_items_json, image_url)
+       VALUES ($1, $2, $3, $4, $5, $6)
        RETURNING *;`, [
             name || 'New Combo Deal',
             description || '',
             Number(package_price) || 0,
             Number(priority_order) || 1,
-            JSON.stringify(includedItems),
+            JSON.stringify(included_items_json || []),
             image_url || '',
-            Boolean(is_time_limited),
-            valid_from || null,
-            valid_to || null,
         ]);
-        const inserted = result.rows[0];
-        res.status(201).json({
-            success: true,
-            message: strings_js_1.STRINGS.COMBO_DEAL_CREATED,
-            data: {
-                ...inserted,
-                package_price: Number(inserted.package_price),
-                included_items_json: typeof inserted.included_items_json === 'string'
-                    ? JSON.parse(inserted.included_items_json)
-                    : inserted.included_items_json,
-            },
-        });
+        res.status(201).json({ success: true, message: strings_js_1.STRINGS.COMBO_DEAL_CREATED, data: dealRes.rows[0] });
     }
     catch (error) {
         next(error);
@@ -806,35 +771,27 @@ router.post('/deals', async (req, res, next) => {
 router.put('/deals/:id', async (req, res, next) => {
     try {
         const id = parseInt(req.params.id, 10);
-        const checkRes = await (0, db_js_1.query)(`SELECT * FROM combo_deals WHERE id = $1;`, [id]);
-        if (checkRes.rows.length === 0) {
+        const { name, description, package_price, priority_order, included_items_json, image_url } = req.body;
+        const currentRes = await (0, db_js_1.query)(`SELECT * FROM combo_deals WHERE id = $1;`, [id]);
+        if (currentRes.rows.length === 0)
             return res.status(404).json({ success: false, message: strings_js_1.STRINGS.COMBO_DEAL_NOT_FOUND });
+        const currentDeal = currentRes.rows[0];
+        if (image_url && image_url !== currentDeal.image_url) {
+            await deleteOldUploadFile(currentDeal.image_url);
         }
-        const currentDeal = checkRes.rows[0];
-        if (req.body.image_url && req.body.image_url !== currentDeal.image_url) {
-            deleteOldUploadFile(currentDeal.image_url);
-        }
-        const name = req.body.name !== undefined ? req.body.name : currentDeal.name;
-        const description = req.body.description !== undefined ? req.body.description : currentDeal.description;
-        const package_price = req.body.package_price !== undefined ? Number(req.body.package_price) : currentDeal.package_price;
-        const priority_order = req.body.priority_order !== undefined ? Number(req.body.priority_order) : currentDeal.priority_order;
-        const image_url = req.body.image_url !== undefined ? req.body.image_url : currentDeal.image_url;
-        const updateRes = await (0, db_js_1.query)(`UPDATE combo_deals
-       SET name = $1, description = $2, package_price = $3, priority_order = $4, image_url = $5
-       WHERE id = $6
-       RETURNING *;`, [name, description, package_price, priority_order, image_url, id]);
-        const updated = updateRes.rows[0];
-        res.json({
-            success: true,
-            message: strings_js_1.STRINGS.COMBO_DEAL_UPDATED,
-            data: {
-                ...updated,
-                package_price: Number(updated.package_price),
-                included_items_json: typeof updated.included_items_json === 'string'
-                    ? JSON.parse(updated.included_items_json)
-                    : updated.included_items_json,
-            },
-        });
+        const updatedRes = await (0, db_js_1.query)(`UPDATE combo_deals
+       SET name = $1, description = $2, package_price = $3, priority_order = $4, included_items_json = $5, image_url = $6
+       WHERE id = $7
+       RETURNING *;`, [
+            name || currentDeal.name,
+            description !== undefined ? description : currentDeal.description,
+            package_price !== undefined ? Number(package_price) : currentDeal.package_price,
+            priority_order !== undefined ? Number(priority_order) : currentDeal.priority_order,
+            included_items_json ? JSON.stringify(included_items_json) : currentDeal.included_items_json,
+            image_url || currentDeal.image_url,
+            id,
+        ]);
+        res.json({ success: true, message: strings_js_1.STRINGS.COMBO_DEAL_UPDATED, data: updatedRes.rows[0] });
     }
     catch (error) {
         next(error);
@@ -843,12 +800,11 @@ router.put('/deals/:id', async (req, res, next) => {
 router.post('/deals/:id/toggle', async (req, res, next) => {
     try {
         const id = parseInt(req.params.id, 10);
-        const result = await (0, db_js_1.query)(`UPDATE combo_deals SET is_active = NOT is_active WHERE id = $1 RETURNING *;`, [id]);
-        if (result.rows.length === 0) {
+        const dealRes = await (0, db_js_1.query)(`UPDATE combo_deals SET is_active = NOT is_active WHERE id = $1 RETURNING *;`, [id]);
+        if (dealRes.rows.length === 0)
             return res.status(404).json({ success: false, message: strings_js_1.STRINGS.COMBO_DEAL_NOT_FOUND });
-        }
-        const deal = result.rows[0];
-        res.json({ success: true, message: deal.is_active ? strings_js_1.STRINGS.COMBO_DEAL_ENABLED : strings_js_1.STRINGS.COMBO_DEAL_DISABLED, data: deal });
+        const deal = dealRes.rows[0];
+        res.json({ success: true, message: `Deal ${deal.is_active ? 'enabled' : 'disabled'}`, data: deal });
     }
     catch (error) {
         next(error);
@@ -857,12 +813,10 @@ router.post('/deals/:id/toggle', async (req, res, next) => {
 router.delete('/deals/:id', async (req, res, next) => {
     try {
         const id = parseInt(req.params.id, 10);
-        const checkRes = await (0, db_js_1.query)(`SELECT * FROM combo_deals WHERE id = $1;`, [id]);
-        if (checkRes.rows.length === 0) {
+        const dealRes = await (0, db_js_1.query)(`DELETE FROM combo_deals WHERE id = $1 RETURNING *;`, [id]);
+        if (dealRes.rows.length === 0)
             return res.status(404).json({ success: false, message: strings_js_1.STRINGS.COMBO_DEAL_NOT_FOUND });
-        }
-        deleteOldUploadFile(checkRes.rows[0].image_url);
-        await (0, db_js_1.query)(`DELETE FROM combo_deals WHERE id = $1;`, [id]);
+        await deleteOldUploadFile(dealRes.rows[0].image_url);
         res.json({ success: true, message: strings_js_1.STRINGS.COMBO_DEAL_DELETED });
     }
     catch (error) {
@@ -883,11 +837,11 @@ router.get('/employees', async (req, res, next) => {
 });
 router.post('/employees', async (req, res, next) => {
     try {
-        const { full_name, phone_number, address, position } = req.body;
-        const result = await (0, db_js_1.query)(`INSERT INTO employees (full_name, phone_number, address, position)
-       VALUES ($1, $2, $3, $4)
-       RETURNING *;`, [full_name || 'New Staff Member', phone_number || '', address || '', position || 'Chef']);
-        res.status(201).json({ success: true, message: strings_js_1.STRINGS.EMPLOYEE_CREATED, data: result.rows[0] });
+        const { full_name, phone_number, address, position, join_date } = req.body;
+        const empRes = await (0, db_js_1.query)(`INSERT INTO employees (full_name, phone_number, address, position, join_date)
+       VALUES ($1, $2, $3, $4, $5)
+       RETURNING *;`, [full_name || 'New Staff Member', phone_number || '', address || '', position || 'Chef', join_date || new Date().toISOString().split('T')[0]]);
+        res.status(201).json({ success: true, message: strings_js_1.STRINGS.EMPLOYEE_CREATED, data: empRes.rows[0] });
     }
     catch (error) {
         next(error);
@@ -896,18 +850,18 @@ router.post('/employees', async (req, res, next) => {
 router.put('/employees/:id', async (req, res, next) => {
     try {
         const id = parseInt(req.params.id, 10);
-        const { full_name, phone_number, address, position } = req.body;
-        const result = await (0, db_js_1.query)(`UPDATE employees
+        const { full_name, phone_number, address, position, join_date } = req.body;
+        const empRes = await (0, db_js_1.query)(`UPDATE employees
        SET full_name = COALESCE($1, full_name),
            phone_number = COALESCE($2, phone_number),
            address = COALESCE($3, address),
-           position = COALESCE($4, position)
-       WHERE id = $5
-       RETURNING *;`, [full_name, phone_number, address, position, id]);
-        if (result.rows.length === 0) {
+           position = COALESCE($4, position),
+           join_date = COALESCE($5, join_date)
+       WHERE id = $6
+       RETURNING *;`, [full_name, phone_number, address, position, join_date, id]);
+        if (empRes.rows.length === 0)
             return res.status(404).json({ success: false, message: strings_js_1.STRINGS.EMPLOYEE_NOT_FOUND });
-        }
-        res.json({ success: true, message: strings_js_1.STRINGS.EMPLOYEE_UPDATED, data: result.rows[0] });
+        res.json({ success: true, message: strings_js_1.STRINGS.EMPLOYEE_UPDATED, data: empRes.rows[0] });
     }
     catch (error) {
         next(error);
@@ -916,10 +870,9 @@ router.put('/employees/:id', async (req, res, next) => {
 router.delete('/employees/:id', async (req, res, next) => {
     try {
         const id = parseInt(req.params.id, 10);
-        const result = await (0, db_js_1.query)(`DELETE FROM employees WHERE id = $1 RETURNING *;`, [id]);
-        if (result.rows.length === 0) {
+        const empRes = await (0, db_js_1.query)(`DELETE FROM employees WHERE id = $1 RETURNING *;`, [id]);
+        if (empRes.rows.length === 0)
             return res.status(404).json({ success: false, message: strings_js_1.STRINGS.EMPLOYEE_NOT_FOUND });
-        }
         res.json({ success: true, message: strings_js_1.STRINGS.EMPLOYEE_DELETED });
     }
     catch (error) {
@@ -940,28 +893,21 @@ router.get('/customers', async (req, res, next) => {
 });
 router.post('/customers', async (req, res, next) => {
     try {
-        const name = req.body.name || 'New Customer';
-        const phone_number = req.body.phone_number || '';
-        const detailed_address = req.body.detailed_address || '';
-        const is_blocked = Boolean(req.body.is_blocked);
-        const userRes = await (0, db_js_1.query)(`INSERT INTO customers (phone_number, name, is_verified, is_blocked)
-       VALUES ($1, $2, true, $3)
-       ON CONFLICT (phone_number) DO UPDATE SET name = EXCLUDED.name, is_blocked = EXCLUDED.is_blocked
-       RETURNING *;`, [phone_number, name, is_blocked]);
-        const user = userRes.rows[0];
+        const { name, phone_number, detailed_address, is_blocked } = req.body;
+        const custRes = await (0, db_js_1.query)(`INSERT INTO customers (name, phone_number, is_blocked)
+       VALUES ($1, $2, $3)
+       RETURNING *;`, [name || 'New Customer', phone_number || '', Boolean(is_blocked)]);
+        const newCust = custRes.rows[0];
         if (detailed_address) {
-            await (0, db_js_1.query)(`INSERT INTO customer_addresses (customer_id, detailed_address, is_default)
-         VALUES ($1, $2, true);`, [user.id, detailed_address]);
+            await (0, db_js_1.query)(`INSERT INTO customer_addresses (customer_id, title, detailed_address, is_default)
+         VALUES ($1, $2, $3, true);`, [newCust.id, 'Home', detailed_address]);
         }
         res.status(201).json({
             success: true,
             message: strings_js_1.STRINGS.CUSTOMER_CREATED,
             data: {
-                id: user.id,
-                name: user.name,
-                phone_number: user.phone_number,
-                detailed_address,
-                is_blocked: user.is_blocked,
+                ...newCust,
+                detailed_address: detailed_address || '',
                 total_orders: 0,
             },
         });
@@ -974,20 +920,28 @@ router.put('/customers/:id', async (req, res, next) => {
     try {
         const id = parseInt(req.params.id, 10);
         const { name, phone_number, detailed_address, is_blocked } = req.body;
-        const userRes = await (0, db_js_1.query)(`UPDATE customers
+        const custRes = await (0, db_js_1.query)(`UPDATE customers
        SET name = COALESCE($1, name),
            phone_number = COALESCE($2, phone_number),
            is_blocked = COALESCE($3, is_blocked)
        WHERE id = $4
        RETURNING *;`, [name, phone_number, is_blocked !== undefined ? Boolean(is_blocked) : null, id]);
-        if (userRes.rows.length === 0) {
+        if (custRes.rows.length === 0)
             return res.status(404).json({ success: false, message: strings_js_1.STRINGS.CUSTOMER_NOT_FOUND });
+        if (detailed_address) {
+            await (0, db_js_1.query)(`INSERT INTO customer_addresses (customer_id, title, detailed_address, is_default)
+         VALUES ($1, $2, $3, true)
+         ON CONFLICT (customer_id, is_default) WHERE is_default = true DO UPDATE
+         SET detailed_address = EXCLUDED.detailed_address;`, [id, 'Home', detailed_address]);
         }
-        if (detailed_address !== undefined) {
-            await (0, db_js_1.query)(`INSERT INTO customer_addresses (customer_id, detailed_address, is_default)
-         VALUES ($1, $2, true);`, [id, detailed_address]);
-        }
-        res.json({ success: true, message: strings_js_1.STRINGS.CUSTOMER_UPDATED, data: userRes.rows[0] });
+        res.json({
+            success: true,
+            message: strings_js_1.STRINGS.CUSTOMER_UPDATED,
+            data: {
+                ...custRes.rows[0],
+                detailed_address: detailed_address || '',
+            },
+        });
     }
     catch (error) {
         next(error);
@@ -996,10 +950,9 @@ router.put('/customers/:id', async (req, res, next) => {
 router.delete('/customers/:id', async (req, res, next) => {
     try {
         const id = parseInt(req.params.id, 10);
-        const result = await (0, db_js_1.query)(`DELETE FROM customers WHERE id = $1 RETURNING *;`, [id]);
-        if (result.rows.length === 0) {
+        const custRes = await (0, db_js_1.query)(`DELETE FROM customers WHERE id = $1 RETURNING *;`, [id]);
+        if (custRes.rows.length === 0)
             return res.status(404).json({ success: false, message: strings_js_1.STRINGS.CUSTOMER_NOT_FOUND });
-        }
         res.json({ success: true, message: strings_js_1.STRINGS.CUSTOMER_DELETED });
     }
     catch (error) {
@@ -1009,12 +962,15 @@ router.delete('/customers/:id', async (req, res, next) => {
 router.post('/customers/:id/toggle-block', async (req, res, next) => {
     try {
         const id = parseInt(req.params.id, 10);
-        const result = await (0, db_js_1.query)(`UPDATE customers SET is_blocked = NOT is_blocked WHERE id = $1 RETURNING *;`, [id]);
-        if (result.rows.length === 0) {
+        const custRes = await (0, db_js_1.query)(`UPDATE customers SET is_blocked = NOT is_blocked WHERE id = $1 RETURNING *;`, [id]);
+        if (custRes.rows.length === 0)
             return res.status(404).json({ success: false, message: strings_js_1.STRINGS.CUSTOMER_NOT_FOUND });
-        }
-        const cust = result.rows[0];
-        res.json({ success: true, message: cust.is_blocked ? strings_js_1.STRINGS.CUSTOMER_BLOCKED_MSG : strings_js_1.STRINGS.CUSTOMER_UNBLOCKED_MSG, data: cust });
+        const cust = custRes.rows[0];
+        res.json({
+            success: true,
+            message: `Customer ${cust.is_blocked ? 'blocked' : 'unblocked'}`,
+            data: cust,
+        });
     }
     catch (error) {
         next(error);
@@ -1034,11 +990,13 @@ router.get('/restaurant/settings', async (req, res, next) => {
 });
 router.post('/restaurant/settings', async (req, res, next) => {
     try {
-        const body = req.body || {};
+        const body = req.body;
         for (const [key, value] of Object.entries(body)) {
             await (0, db_js_1.query)(`INSERT INTO system_settings (setting_key, setting_value)
          VALUES ($1, $2)
-         ON CONFLICT (setting_key) DO UPDATE SET setting_value = EXCLUDED.setting_value;`, [key, String(value)]);
+         ON CONFLICT (setting_key) DO UPDATE
+         SET setting_value = EXCLUDED.setting_value,
+             updated_at = CURRENT_TIMESTAMP;`, [key, String(value)]);
         }
         const updatedSettings = await (0, dbStore_js_1.getSystemSettingsFromDB)();
         res.json({ success: true, message: strings_js_1.STRINGS.SETTINGS_UPDATED, data: updatedSettings });
@@ -1050,19 +1008,27 @@ router.post('/restaurant/settings', async (req, res, next) => {
 // ==========================================
 // 10. PROFILE & MEDIA UPLOAD MODULE
 // ==========================================
-router.get('/profile', (req, res) => {
-    res.json({ success: true, data: req.admin });
+router.get('/profile', async (req, res, next) => {
+    try {
+        res.json({ success: true, data: req.admin });
+    }
+    catch (error) {
+        next(error);
+    }
 });
 router.post('/upload', uploadService_js_1.uploadMiddleware.single('image'), async (req, res, next) => {
     try {
         if (!req.file) {
             return res.status(400).json({ success: false, message: strings_js_1.STRINGS.NO_FILE_UPLOADED });
         }
-        const imageUrl = await (0, uploadService_js_1.uploadToCloudinary)(req.file.buffer);
+        let imageUrl = `${config_js_1.env.BASE_URL}/uploads/${req.file.filename}`;
+        if (config_js_1.env.CLOUDINARY_CLOUD_NAME && req.file.buffer) {
+            imageUrl = await (0, uploadService_js_1.uploadToCloudinary)(req.file.buffer);
+        }
         res.json({
             success: true,
             message: strings_js_1.STRINGS.FILE_UPLOADED_SUCCESS,
-            filename: req.file.originalname,
+            filename: req.file.filename,
             imageUrl,
         });
     }
